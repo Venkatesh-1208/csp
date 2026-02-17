@@ -10,60 +10,44 @@ permissions:
   contents: read
 
 env:
-  RESOURCE_GROUP: rg-csp-web-demo-scus
   API_WEBAPP: app-csp-api-demo-scus
   UI_WEBAPP: app-csp-ui-demo-scus
 
 jobs:
-  build-and-deploy:
+  deploy:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Azure Login
-        uses: azure/login@v2
+      - uses: azure/login@v2
         with:
           creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}"}'
 
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
 
-      # -------------------------
-      # BACKEND BUILD & DEPLOY
-      # -------------------------
-      - name: Publish Backend API
+      # -------- API ----------
+      - name: Publish API
         run: |
           dotnet publish src/csp.api/csp.api.csproj -c Release -o api-publish
+          ls -la api-publish
 
-      - name: Deploy Backend to Azure
+      - name: Deploy API
         uses: azure/webapps-deploy@v3
         with:
           app-name: ${{ env.API_WEBAPP }}
-          package: ./api-publish
+          package: api-publish
 
-      # -------------------------
-      # FRONTEND BUILD & DEPLOY
-      # -------------------------
-      - name: Publish Frontend UI
+      # -------- UI ----------
+      - name: Publish UI
         run: |
-          dotnet publish frontend/CloudSolutionProvider/CloudSolutionProvider-UI/*.csproj -c Release -o ui-publish
+          dotnet publish frontend/CloudSolutionProvider/CloudSolutionProvider-UI/CloudSolutionProvider-UI.csproj -c Release -o ui-publish
+          ls -la ui-publish
 
-      - name: Deploy Frontend to Azure
+      - name: Deploy UI
         uses: azure/webapps-deploy@v3
         with:
           app-name: ${{ env.UI_WEBAPP }}
-          package: ./ui-publish
-
-      - name: Deployment Summary
-        run: |
-          echo "## 🚀 Deployment Completed" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### API URL:" >> $GITHUB_STEP_SUMMARY
-          echo "https://${{ env.API_WEBAPP }}.azurewebsites.net" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### UI URL:" >> $GITHUB_STEP_SUMMARY
-          echo "https://${{ env.UI_WEBAPP }}.azurewebsites.net" >> $GITHUB_STEP_SUMMARY
+          package: ui-publish

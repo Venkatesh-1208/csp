@@ -1,86 +1,61 @@
-026-02-17T17:59:02.5560565Z Note: Any data outside '/home' is not persisted
-2026-02-17T17:59:04.9081264Z Starting OpenBSD Secure Shell server: sshd.
-2026-02-17T17:59:04.9087383Z WEBSITES_INCLUDE_CLOUD_CERTS is not set to true.
-2026-02-17T17:59:04.908744Z Updating certificates in /etc/ssl/certs...
-2026-02-17T17:59:32.0494301Z rehash: warning: skipping duplicate certificate in azl_SSL.com_TLS_ECC_Root_CA_2022.pem
-2026-02-17T17:59:32.050403Z rehash: warning: skipping duplicate certificate in azl_SSL.com_TLS_RSA_Root_CA_2022.pem
-2026-02-17T17:59:32.4052488Z rehash: warning: skipping ca-certificates.crt,it does not contain exactly one certificate or CRL
-2026-02-17T17:59:32.4542199Z 4 added, 0 removed; done.
-2026-02-17T17:59:32.4548838Z Running hooks in /etc/ca-certificates/update.d...
-2026-02-17T17:59:32.4754531Z done.
-2026-02-17T17:59:32.5040225Z CA certificates copied and updated successfully.
-2026-02-17T17:59:32.9807415Z Starting periodic command scheduler: cron.
-2026-02-17T17:59:32.9998556Z Running oryx create-script -appPath /home/site/wwwroot -output /opt/startup/startup.sh -defaultAppFilePath /defaulthome/hostingstart/hostingstart.dll     -bindPort 8080 -bindPort2 '' -userStartupCommand ''
-2026-02-17T17:59:33.6609851Z Could not find build manifest file at '/home/site/wwwroot/oryx-manifest.toml'
-2026-02-17T17:59:33.6617033Z Could not find operation ID in manifest. Generating an operation id...
-2026-02-17T17:59:33.6625566Z Build Operation ID: 2595350c-0df7-480d-b9bb-4549148a186a
-2026-02-17T17:59:34.5330761Z
-2026-02-17T17:59:34.5409148Z Agent extension
-2026-02-17T17:59:34.5418682Z Before if loop >> DotNet Runtime
-2026-02-17T17:59:34.608904Z DotNet Runtime 8.0Writing output script to '/opt/startup/startup.sh'
-2026-02-17T17:59:34.8554172Z Trying to find the startup DLL name...
-2026-02-17T17:59:34.8566979Z Found the startup D name: CloudSolutionProvider-UI.dll
-2026-02-17T17:59:34.8737135Z Running the command: dotnet "CloudSolutionProvider-UI.dll"
-2026-02-17T17:59:35.1688863Z You must install or update .NET to run this application.
-2026-02-17T17:59:35.1689413Z
-2026-02-17T17:59:35.1689444Z App: /home/site/wwwroot/CloudSolutionProvider-UI.dll
-2026-02-17T17:59:35.1689478Z Architecture: x64
-2026-02-17T17:59:35.1689498Z Framework: 'Microsoft.NETCore.App', version '10.0.0' (x64)
-2026-02-17T17:59:35.1689516Z .NET location: /usr/share/dotnet/
-2026-02-17T17:59:35.1689532Z
-2026-02-17T17:59:35.1689634Z The following frameworks were found:
-2026-02-17T17:59:35.1689654Z   8.0.23 at [/usr/share/dotnet/shared/Microsoft.NETCore.App]
-2026-02-17T17:59:35.1705466Z
-2026-02-17T17:59:35.1712462Z Learn more:
-2026-02-17T17:59:35.1712524Z https://aka.ms/dotnet/app-launch-failed
-2026-02-17T17:59:35.1712542Z
-2026-02-17T17:59:35.171256Z To install missing framework, download:
-2026-02-17T17:59:35.1712602Z https://aka.ms/dotnet-core-applaunch?framework=Microsoft.NETCore.App&framework_version=10.0.0&arch=x64&rid=linux-x64&os=debian.12
-2026-02-17T18:00:44.8269482Z    _____
-2026-02-17T18:00:44.8270031Z   /  _  \ __________ _________   ____
-2026-02-17T18:00:44.8270116Z  /  /_\  \\___   /  |  \_  __ \_/ __ \
-2026-02-17T18:00:44.8270139Z /    |    \/    /|  |  /|  | \/\  ___/
-2026-02-17T18:00:44.8270159Z \____|__  /_____ \____/ |__|    \___  >
-2026-02-17T18:00:44.8270177Z         \/      \/                  \/
-2026-02-17T18:00:44.8270194Z A P P   S E R V I C E   O N   L I N U X
-2026-02-17T18:00:44.8270211Z
-2026-02-17T18:00:44.8270231Z Documentation       : http://aka.ms/webapp-linux
-2026-02-17T18:00:44.827025Z Dotnet quickstart   : https://aka.ms/dotnet-qs
-2026-02-17T18:00:44.8270268Z ASP .NETCore Version: 8.0.23
-2026-02-17T18:00:44.8270286Z Instance Name       : lw0sdlwk000161
-2026-02-17T18:00:44.8270308Z Instance Id         : 07a7bc6d9740f0aeffbc31d7cea439fc8cdc83fb6859b85b5b01d806e70d3521
-2026-02-17T18:00:44.8270346Z
-2026-02-17T18:00:44.8270366Z Note: Any data outside '/home' is not persisted
-2026-02-17T18:00:48.3962057Z Starting OpenBSD Secure Shell server: sshd.
-2026-02-17T18:00:48.4175762Z WEBSITES_INCLUDE_CLOUD_CERTS is not set to true.
-2026-02-17T18:00:48.4780661Z Updating certificates in /etc/ssl/certs...
-2026-02-17T18:01:17.3823232Z rehash: warning: skipping duplicate certificate in azl_SSL.com_TLS_ECC_Root_CA_2022.pem
-2026-02-17T18:01:17.3833252Z rehash: warning: skipping duplicate certificate in azl_SSL.com_TLS_RSA_Root_CA_2022.pem
-2026-02-17T18:01:18.582022Z rehash: warning: skipping ca-certificates.crt,it does not contain exactly one certificate or CRL
-2026-02-17T18:01:18.6695146Z 4 added, 0 removed; done.
-2026-02-17T18:01:18.6781105Z Running hooks in /etc/ca-certificates/update.d...
-2026-02-17T18:01:18.6978939Z done.
-2026-02-17T18:01:18.8218107Z CA certificates copied and updated successfully.
-2026-02-17T18:01:19.73682Z Starting periodic command scheduler: cron.
-2026-02-17T18:01:19.8532696Z Running oryx create-script -appPath /home/site/wwwroot -output /opt/startup/startup.sh -defaultAppFilePath /defaulthome/hostingstart/hostingstart.dll     -bindPort 8080 -bindPort2 '' -userStartupCommand ''
-2026-02-17T18:01:20.7550599Z Could not find build manifest file at '/home/site/wwwroot/oryx-manifest.toml'
-2026-02-17T18:01:20.756693Z Could not find operation ID in manifest. Generating an operation id...
-2026-02-17T18:01:20.7645842Z Build Operation ID: 97bd8a78-5837-4337-a958-40938288b84f
-2026-02-17T18:01:21.5964582Z
-2026-02-17T18:01:21.5970072Z Agent extension
-2026-02-17T18:01:21.5977803Z Before if loop >> DotNet Runtime
-2026-02-17T18:01:21.6766899Z DotNet Runtime 8.0Writing output script to '/opt/startup/startup.sh'
-2026-02-17T18:01:22.0521174Z Trying to find the startup DLL name...
-2026-02-17T18:01:22.0617738Z Found the startup D name: CloudSolutionProvider-UI.dll
-2026-02-17T18:01:22.0708754Z Running the command: dotnet "CloudSolutionProvider-UI.dll"
-2026-02-17T18:01:22.1863454Z You must install or update .NET to run this application.
-2026-02-17T18:01:22.1864059Z
-2026-02-17T18:01:22.1864093Z App: /home/site/wwwroot/CloudSolutionProvider-UI.dll
-2026-02-17T18:01:22.1864119Z Architecture: x64
-2026-02-17T18:01:22.1864139Z Framework: 'Microsoft.NETCore.App', version '10.0.0' (x64)
-2026-02-17T18:01:22.1864157Z .NET location: /usr/share/dotnet/
-2026-02-17T18:01:22.1864173Z
-2026-02-17T18:01:22.1864266Z The following frameworks were found:
-2026-02-17T18:01:22.1864286Z   8.0.23 at [/usr/share/dotnet/shared/Microsoft.NETCore.App]
-2026-02-17T18:01:22.1864301Z
-2026-02-17T18:01:22.1864317Z Learn more:
+API Program.cs
+using csp.api;
+using csp.api.Middleware;
+using csp.application;
+using csp.infrastructure;
+using Serilog;
+
+var builder = WebApplication.CreateBuilder(args);
+
+// Configure Serilog
+Log.Logger = new LoggerConfiguration()
+    .ReadFrom.Configuration(builder.Configuration)
+    .Enrich.FromLogContext()
+    .CreateLogger();
+
+builder.Host.UseSerilog();
+
+// Add services to the container
+builder.Services.AddApplicationServices();
+builder.Services.AddInfrastructureServices(builder.Configuration);
+builder.Services.AddApiServices(builder.Configuration);
+
+var app = builder.Build();
+
+// Configure the HTTP request pipeline
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI(c =>
+    {
+        c.SwaggerEndpoint("/swagger/v1/swagger.json", "CSP API v1");
+        // c.RoutePrefix = string.Empty;
+    });
+}
+
+app.UseMiddleware<ExceptionHandlingMiddleware>();
+
+app.UseHttpsRedirection();
+
+app.UseCors("AllowSpecificOrigins");
+
+app.UseAuthentication();
+app.UseAuthorization();
+
+app.MapControllers();
+
+app.MapHealthChecks("/health");
+
+try
+{
+    Log.Information("Starting CSP API");
+    app.Run();
+}
+catch (Exception ex)
+{
+    Log.Fatal(ex, "CSP API terminated unexpectedly");
+}
+finally
+{
+    Log.CloseAndFlush();
+}

@@ -1,0 +1,47 @@
+2026-02-17T17:48:12.8305566Z Documentation       : http://aka.ms/webapp-linux
+2026-02-17T17:48:12.8305589Z Dotnet quickstart   : https://aka.ms/dotnet-qs
+2026-02-17T17:48:12.8305607Z ASP .NETCore Version: 10.0.2
+2026-02-17T17:48:12.8305626Z Instance Name       : lw0sdlwk000161
+2026-02-17T17:48:12.8305649Z Instance Id         : 07a7bc6d9740f0aeffbc31d7cea439fc8cdc83fb6859b85b5b01d806e70d3521
+2026-02-17T17:48:12.8305665Z
+2026-02-17T17:48:12.8305685Z Note: Any data outside '/home' is not persisted
+2026-02-17T17:48:19.3667425Z  * Starting OpenBSD Secure Shell server sshd
+2026-02-17T17:48:19.4236444Z    ...done.
+2026-02-17T17:48:19.444631Z WEBSITES_INCLUDE_CLOUD_CERTS is not set to true.
+2026-02-17T17:48:19.5128633Z Updating certificates in /etc/ssl/certs...
+2026-02-17T17:48:42.4506851Z rehash: warning: skipping duplicate certificate in SSLcom-TLS-Root-2022-ECC.pem
+2026-02-17T17:48:42.4591655Z rehash: warning: skipping duplicate certificate in SSLcom-TLS-Root-2022-RSA.pem
+2026-02-17T17:48:42.9751462Z rehash: warning: skipping ca-certificates.crt,it does not contain exactly one certificate or CRL
+2026-02-17T17:48:43.0553071Z 4 added, 0 removed; done.
+2026-02-17T17:48:43.0553518Z Running hooks in /etc/ca-certificates/update.d...
+2026-02-17T17:48:43.1349061Z done.
+2026-02-17T17:48:43.1764825Z CA certificates copied and updated successfully.
+2026-02-17T17:48:43.4144759Z  * Starting periodic command scheduler cron
+2026-02-17T17:48:43.5067115Z    ...done.
+2026-02-17T17:48:43.5067465Z Running oryx create-script -appPath /home/site/wwwroot -output /opt/startup/startup.sh -defaultAppFilePath /defaulthome/hostingstart/hostingstart.dll     -bindPort 8080 -bindPort2 '' -userStartupCommand ''
+2026-02-17T17:48:43.7313315Z Could not find build manifest file at '/home/site/wwwroot/oryx-manifest.toml'
+2026-02-17T17:48:43.7415654Z Could not find operation ID in manifest. Generating an operation id...
+2026-02-17T17:48:43.7508447Z Build Operation ID: 31db0bf9-a6c1-459a-820a-bdc1ef96978c
+2026-02-17T17:48:44.4779141Z
+2026-02-17T17:48:44.4851151Z Agent extension
+2026-02-17T17:48:44.4864785Z Before if loop >> DotNet Runtime
+2026-02-17T17:48:44.5656954Z DotNet Runtime 10.0Writing output script to '/opt/startup/startup.sh'
+2026-02-17T17:48:44.6863186Z Trying to find the startup DLL name...
+2026-02-17T17:48:44.6946412Z Found the startup D name: csp.api.dll
+2026-02-17T17:48:44.6946585Z Running the command: dotnet "csp.api.dll"
+2026-02-17T17:48:44.7367201Z You must install or update .NET to run this application.
+2026-02-17T17:48:44.7367453Z
+2026-02-17T17:48:44.7367483Z App: /home/site/wwwroot/csp.api.dll
+2026-02-17T17:48:44.7533213Z Architecture: x64
+2026-02-17T17:48:44.7548536Z Framework: 'Microsoft.NETCore.App', version '8.0.0' (x64)
+2026-02-17T17:48:44.7559788Z .NET location: /usr/share/dotnet/
+2026-02-17T17:48:44.7567192Z
+2026-02-17T17:48:44.7664487Z The following frameworks were found:
+2026-02-17T17:48:44.7664729Z   10.0.2 at [/usr/share/dotnet/shared/Microsoft.NETCore.App]
+2026-02-17T17:48:44.7664753Z
+2026-02-17T17:48:44.7664769Z Learn more:
+2026-02-17T17:48:44.7664787Z https://aka.ms/dotnet/app-launch-failed
+2026-02-17T17:48:44.7664802Z
+2026-02-17T17:48:44.7664823Z To install missing framework, download:
+2026-02-17T17:48:44.766487Z https://aka.ms/dotnet-core-applaunch?framework=Microsoft.NETCore.App&framework_version=8.0.0&arch=x64&rid=linux-x64&os=ubuntu.24.04
+2026-02-17T17:49:56.811Z No new trace in the past 1 min(s).

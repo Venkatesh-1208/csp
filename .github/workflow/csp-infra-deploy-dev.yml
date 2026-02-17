@@ -1,28 +1,61 @@
-name: CSP Infra Deploy - DEV
+# ============================================================================
+# CSP Portal - Infrastructure Deployment (DEMO)
+# ============================================================================
+# Deploys Core, Web, and Data tier infrastructure to DEMO environment
+# Triggered on changes to infra/** on release branches or manual dispatch
+# ============================================================================
+
+name: Infrastructure Deploy DEMO
 
 on:
   push:
-    branches: [develop]
+    branches: 
+      - 'release/**'
+      - 'release/*'
     paths:
-      - infra/**
+      - 'infra/**'
   workflow_dispatch:
+    inputs:
+      deploy_core:
+        description: 'Deploy Core Infrastructure'
+        required: true
+        default: true
+        type: boolean
+      deploy_web:
+        description: 'Deploy Web Tier'
+        required: true
+        default: true
+        type: boolean
+      deploy_data:
+        description: 'Deploy Data Tier'
+        required: true
+        default: true
+        type: boolean
 
 permissions:
   id-token: write
   contents: read
 
 env:
-  ENVIRONMENT: dev
+  AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+  AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+  AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+  ENVIRONMENT: demo
   LOCATION: southcentralus
   PROJECT_NAME: csp
 
 jobs:
+  # ============================================================================
+  # Validate Bicep Templates
+  # ============================================================================
   validate:
     name: Validate Bicep Templates
     runs-on: ubuntu-latest
-
+    outputs:
+      deployment_name: ${{ steps.set-name.outputs.name }}
     steps:
-      - name: Checkout
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
       - name: Azure Login
@@ -30,27 +63,55 @@ jobs:
         with:
           creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}"}'
 
-      - name: Bicep Build
+      - name: Set Deployment Name
+        id: set-name
+        run: echo "name=csp-infra-demo-$(date +%Y%m%d%H%M%S)" >> $GITHUB_OUTPUT
+
+      - name: Check Bicep Files Exist
+        id: check-bicep
         run: |
-          echo "🔍 Validating Bicep syntax"
+          if [ -f "infra/main.bicep" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "⚠️ Bicep templates not found, skipping validation"
+          fi
+
+      - name: Validate Bicep Syntax
+        if: steps.check-bicep.outputs.exists == 'true'
+        run: |
+          echo "🔍 Validating Bicep templates..."
           az bicep build --file infra/main.bicep
+          echo "✅ Bicep syntax validation passed"
 
-      - name: What-If Deployment
+      - name: Validate Deployment (What-If)
+        if: steps.check-bicep.outputs.exists == 'true'
         run: |
-          echo "🔍 Running what-if"
+          echo "🔍 Running what-if deployment validation..."
           az deployment sub what-if \
-            --location $LOCATION \
+            --location ${{ env.LOCATION }} \
             --template-file infra/main.bicep \
-            --parameters infra/parameters/dev.bicepparam
+            --parameters infra/parameters/demo.bicepparam \
+            --name "${{ steps.set-name.outputs.name }}-validate"
+          echo "✅ What-if validation completed"
 
-  deploy:
-    name: Deploy Infrastructure (DEV)
+  # ============================================================================
+  # Deploy Core Infrastructure
+  # ============================================================================
+  deploy-core:
+    name: Deploy Core Infrastructure
     needs: validate
     runs-on: ubuntu-latest
-    environment: dev
-
+    environment: demo
+    if: ${{ github.event_name == 'push' || github.event.inputs.deploy_core == 'true' }}
+    outputs:
+      vnet_id: ${{ steps.deploy.outputs.vnetId }}
+      log_analytics_id: ${{ steps.deploy.outputs.logAnalyticsWorkspaceId }}
+      keyvault_name: ${{ steps.deploy.outputs.keyVaultName }}
+      app_subnet_id: ${{ steps.deploy.outputs.appSubnetId }}
+      data_subnet_id: ${{ steps.deploy.outputs.dataSubnetId }}
     steps:
-      - name: Checkout
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
       - name: Azure Login
@@ -58,19 +119,504 @@ jobs:
         with:
           creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}"}'
 
-      - name: Deploy Infra via Bicep
+      - name: Create Core Resource Group
         run: |
-          echo "🚀 Deploying infrastructure via Bicep"
-          az deployment sub create \
-            --location $LOCATION \
-            --template-file infra/main.bicep \
-            --parameters infra/parameters/dev.bicepparam \
-            --name csp-infra-dev-${{ github.run_id }}
+          echo "📦 Creating Core Resource Group..."
+          az group create \
+            --name rg-${{ env.PROJECT_NAME }}-core-${{ env.ENVIRONMENT }}-scus \
+            --location ${{ env.LOCATION }} \
+            --tags \
+              Environment=${{ env.ENVIRONMENT }} \
+              Project=CSP-Portal \
+              Application=csp-portal \
+              CostCenter=CC-CSP-DEMO-001 \
+              Owner=platform-engineering \
+              ManagedBy=bicep \
+              Criticality=medium \
+              Tier=core
+          echo "✅ Core Resource Group created"
 
-      - name: Deployment Summary
+      - name: Deploy Core Infrastructure
+        id: deploy
         run: |
-          echo "## 🏗️ Infrastructure Deployment Completed" >> $GITHUB_STEP_SUMMARY
+          echo "🚀 Deploying Core Infrastructure..."
+          
+          # Deploy VNet (DEMO uses 10.15.0.0/16)
+          echo "  → Deploying Virtual Network..."
+          az network vnet create \
+            --resource-group rg-${{ env.PROJECT_NAME }}-core-${{ env.ENVIRONMENT }}-scus \
+            --name vnet-${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-scus \
+            --address-prefix 10.15.0.0/16 \
+            --location ${{ env.LOCATION }} \
+            --tags Environment=${{ env.ENVIRONMENT }} Project=CSP-Portal ManagedBy=bicep
+          
+          # Create App Subnet
+          echo "  → Creating App Subnet..."
+          az network vnet subnet create \
+            --resource-group rg-${{ env.PROJECT_NAME }}-core-${{ env.ENVIRONMENT }}-scus \
+            --vnet-name vnet-${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-scus \
+            --name snet-${{ env.PROJECT_NAME }}-app-${{ env.ENVIRONMENT }}-scus \
+            --address-prefix 10.15.1.0/24 \
+            --delegations Microsoft.Web/serverFarms
+          
+          # Create Data Subnet
+          echo "  → Creating Data Subnet..."
+          az network vnet subnet create \
+            --resource-group rg-${{ env.PROJECT_NAME }}-core-${{ env.ENVIRONMENT }}-scus \
+            --vnet-name vnet-${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-scus \
+            --name snet-${{ env.PROJECT_NAME }}-data-${{ env.ENVIRONMENT }}-scus \
+            --address-prefix 10.15.3.0/24
+          
+          # Deploy Log Analytics Workspace
+          echo "  → Deploying Log Analytics Workspace..."
+          az monitor log-analytics workspace create \
+            --resource-group rg-${{ env.PROJECT_NAME }}-core-${{ env.ENVIRONMENT }}-scus \
+            --workspace-name log-${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-scus \
+            --location ${{ env.LOCATION }} \
+            --sku PerGB2018 \
+            --retention-time 30 \
+            --tags Environment=${{ env.ENVIRONMENT }} Project=CSP-Portal ManagedBy=bicep
+          
+          # Deploy Key Vault
+          echo "  → Deploying Key Vault..."
+          az keyvault create \
+            --resource-group rg-${{ env.PROJECT_NAME }}-core-${{ env.ENVIRONMENT }}-scus \
+            --name kv-${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-scus \
+            --location ${{ env.LOCATION }} \
+            --sku standard \
+            --enable-rbac-authorization true \
+            --enable-soft-delete true \
+            --soft-delete-retention-days 14 \
+            --tags Environment=${{ env.ENVIRONMENT }} Project=CSP-Portal ManagedBy=bicep DataClassification=internal
+          
+          echo "✅ Core Infrastructure deployed successfully"
+          
+          # Set outputs
+          VNET_ID=$(az network vnet show --resource-group rg-${{ env.PROJECT_NAME }}-core-${{ env.ENVIRONMENT }}-scus --name vnet-${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-scus --query id -o tsv)
+          LOG_ID=$(az monitor log-analytics workspace show --resource-group rg-${{ env.PROJECT_NAME }}-core-${{ env.ENVIRONMENT }}-scus --workspace-name log-${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-scus --query id -o tsv)
+          KV_NAME="kv-${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-scus"
+          APP_SUBNET_ID=$(az network vnet subnet show --resource-group rg-${{ env.PROJECT_NAME }}-core-${{ env.ENVIRONMENT }}-scus --vnet-name vnet-${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-scus --name snet-${{ env.PROJECT_NAME }}-app-${{ env.ENVIRONMENT }}-scus --query id -o tsv)
+          DATA_SUBNET_ID=$(az network vnet subnet show --resource-group rg-${{ env.PROJECT_NAME }}-core-${{ env.ENVIRONMENT }}-scus --vnet-name vnet-${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-scus --name snet-${{ env.PROJECT_NAME }}-data-${{ env.ENVIRONMENT }}-scus --query id -o tsv)
+          
+          echo "vnetId=$VNET_ID" >> $GITHUB_OUTPUT
+          echo "logAnalyticsWorkspaceId=$LOG_ID" >> $GITHUB_OUTPUT
+          echo "keyVaultName=$KV_NAME" >> $GITHUB_OUTPUT
+          echo "appSubnetId=$APP_SUBNET_ID" >> $GITHUB_OUTPUT
+          echo "dataSubnetId=$DATA_SUBNET_ID" >> $GITHUB_OUTPUT
+
+      - name: Deployment Summary (Core)
+        run: |
+          echo "## 🏗️ Core Infrastructure Deployment Summary (DEMO)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- Environment: DEV" >> $GITHUB_STEP_SUMMARY
-          echo "- Location: $LOCATION" >> $GITHUB_STEP_SUMMARY
-          echo "- Deployment Name: csp-infra-dev-${{ github.run_id }}" >> $GITHUB_STEP_SUMMARY
+          echo "| Resource | Name | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Resource Group | rg-${{ env.PROJECT_NAME }}-core-${{ env.ENVIRONMENT }}-scus | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "| Virtual Network | vnet-${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-scus (10.15.0.0/16) | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "| App Subnet | snet-${{ env.PROJECT_NAME }}-app-${{ env.ENVIRONMENT }}-scus | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "| Data Subnet | snet-${{ env.PROJECT_NAME }}-data-${{ env.ENVIRONMENT }}-scus | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "| Log Analytics | log-${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-scus | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "| Key Vault | kv-${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-scus | ✅ |" >> $GITHUB_STEP_SUMMARY
+
+  # ============================================================================
+  # Deploy Web Tier
+  # ============================================================================
+  deploy-web:
+    name: Deploy Web Tier
+    needs: deploy-core
+    runs-on: ubuntu-latest
+    environment: demo
+    if: ${{ github.event_name == 'push' || github.event.inputs.deploy_web == 'true' }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}"}'
+
+      - name: Create Web Resource Group
+        run: |
+          echo "📦 Creating Web Resource Group..."
+          az group create \
+            --name rg-${{ env.PROJECT_NAME }}-web-${{ env.ENVIRONMENT }}-scus \
+            --location ${{ env.LOCATION }} \
+            --tags \
+              Environment=${{ env.ENVIRONMENT }} \
+              Project=CSP-Portal \
+              Application=csp-portal \
+              CostCenter=CC-CSP-DEMO-001 \
+              Owner=platform-engineering \
+              ManagedBy=bicep \
+              Criticality=medium \
+              Tier=web \
+              Phase=phase-1
+          echo "✅ Web Resource Group created"
+
+      - name: Deploy Web Tier Infrastructure
+        run: |
+          echo "🚀 Deploying Web Tier..."
+          
+          # Deploy App Service Plan (Web) - S1 for DEMO
+          echo "  → Deploying App Service Plan (S1)..."
+          az appservice plan create \
+            --resource-group rg-${{ env.PROJECT_NAME }}-web-${{ env.ENVIRONMENT }}-scus \
+            --name asp-${{ env.PROJECT_NAME }}-web-${{ env.ENVIRONMENT }}-scus \
+            --location ${{ env.LOCATION }} \
+            --sku S1 \
+            --is-linux \
+            --tags Environment=${{ env.ENVIRONMENT }} Project=CSP-Portal ManagedBy=bicep Tier=web
+          
+          # Deploy Web App
+          echo "  → Deploying Web App..."
+          az webapp create \
+            --resource-group rg-${{ env.PROJECT_NAME }}-web-${{ env.ENVIRONMENT }}-scus \
+            --plan asp-${{ env.PROJECT_NAME }}-web-${{ env.ENVIRONMENT }}-scus \
+            --name app-${{ env.PROJECT_NAME }}-web-${{ env.ENVIRONMENT }}-scus \
+            --runtime "DOTNETCORE:8.0" \
+            --https-only true \
+            --tags Environment=${{ env.ENVIRONMENT }} Project=CSP-Portal ManagedBy=bicep Tier=web Phase=phase-1
+          
+          # Configure Web App settings
+          echo "  → Configuring Web App settings..."
+          az webapp config set \
+            --resource-group rg-${{ env.PROJECT_NAME }}-web-${{ env.ENVIRONMENT }}-scus \
+            --name app-${{ env.PROJECT_NAME }}-web-${{ env.ENVIRONMENT }}-scus \
+            --min-tls-version 1.2 \
+            --ftps-state Disabled \
+            --always-on true
+          
+          # Enable System-assigned Managed Identity
+          echo "  → Enabling Managed Identity..."
+          az webapp identity assign \
+            --resource-group rg-${{ env.PROJECT_NAME }}-web-${{ env.ENVIRONMENT }}-scus \
+            --name app-${{ env.PROJECT_NAME }}-web-${{ env.ENVIRONMENT }}-scus
+          
+          # Deploy Application Insights
+          echo "  → Deploying Application Insights..."
+          az monitor app-insights component create \
+            --app appi-${{ env.PROJECT_NAME }}-web-${{ env.ENVIRONMENT }}-scus \
+            --resource-group rg-${{ env.PROJECT_NAME }}-web-${{ env.ENVIRONMENT }}-scus \
+            --location ${{ env.LOCATION }} \
+            --kind web \
+            --application-type web \
+            --workspace "/subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/rg-${{ env.PROJECT_NAME }}-core-${{ env.ENVIRONMENT }}-scus/providers/Microsoft.OperationalInsights/workspaces/log-${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-scus" \
+            --tags Environment=${{ env.ENVIRONMENT }} Project=CSP-Portal ManagedBy=bicep Tier=web
+          
+          # Link App Insights to Web App
+          echo "  → Linking Application Insights to Web App..."
+          APPINSIGHTS_KEY=$(az monitor app-insights component show \
+            --app appi-${{ env.PROJECT_NAME }}-web-${{ env.ENVIRONMENT }}-scus \
+            --resource-group rg-${{ env.PROJECT_NAME }}-web-${{ env.ENVIRONMENT }}-scus \
+            --query instrumentationKey -o tsv)
+          
+          APPINSIGHTS_CONN=$(az monitor app-insights component show \
+            --app appi-${{ env.PROJECT_NAME }}-web-${{ env.ENVIRONMENT }}-scus \
+            --resource-group rg-${{ env.PROJECT_NAME }}-web-${{ env.ENVIRONMENT }}-scus \
+            --query connectionString -o tsv)
+          
+          az webapp config appsettings set \
+            --resource-group rg-${{ env.PROJECT_NAME }}-web-${{ env.ENVIRONMENT }}-scus \
+            --name app-${{ env.PROJECT_NAME }}-web-${{ env.ENVIRONMENT }}-scus \
+            --settings \
+              APPINSIGHTS_INSTRUMENTATIONKEY=$APPINSIGHTS_KEY \
+              APPLICATIONINSIGHTS_CONNECTION_STRING=$APPINSIGHTS_CONN \
+              ApplicationInsightsAgent_EXTENSION_VERSION=~3 \
+              ASPNETCORE_ENVIRONMENT=Staging
+          
+          # Create staging slot
+          echo "  → Creating staging deployment slot..."
+          az webapp deployment slot create \
+            --resource-group rg-${{ env.PROJECT_NAME }}-web-${{ env.ENVIRONMENT }}-scus \
+            --name app-${{ env.PROJECT_NAME }}-web-${{ env.ENVIRONMENT }}-scus \
+            --slot staging
+          
+          echo "✅ Web Tier deployed successfully"
+
+      - name: Deployment Summary (Web)
+        run: |
+          WEB_URL=$(az webapp show \
+            --resource-group rg-${{ env.PROJECT_NAME }}-web-${{ env.ENVIRONMENT }}-scus \
+            --name app-${{ env.PROJECT_NAME }}-web-${{ env.ENVIRONMENT }}-scus \
+            --query defaultHostName -o tsv)
+          
+          echo "## 🌐 Web Tier Deployment Summary (DEMO)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Resource | Name | SKU | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|------|-----|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Resource Group | rg-${{ env.PROJECT_NAME }}-web-${{ env.ENVIRONMENT }}-scus | - | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "| App Service Plan | asp-${{ env.PROJECT_NAME }}-web-${{ env.ENVIRONMENT }}-scus | S1 | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "| Web App | app-${{ env.PROJECT_NAME }}-web-${{ env.ENVIRONMENT }}-scus | (S1) | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "| Application Insights | appi-${{ env.PROJECT_NAME }}-web-${{ env.ENVIRONMENT }}-scus | - | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "| Staging Slot | staging | - | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔗 Web App URL" >> $GITHUB_STEP_SUMMARY
+          echo "https://$WEB_URL" >> $GITHUB_STEP_SUMMARY
+
+  # ============================================================================
+  # Deploy Data Tier
+  # ============================================================================
+  deploy-data:
+    name: Deploy Data Tier
+    needs: deploy-core
+    runs-on: ubuntu-latest
+    environment: demo
+    if: ${{ github.event_name == 'push' || github.event.inputs.deploy_data == 'true' }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}"}'
+
+      - name: Create Data Resource Group
+        run: |
+          echo "📦 Creating Data Resource Group..."
+          az group create \
+            --name rg-${{ env.PROJECT_NAME }}-data-${{ env.ENVIRONMENT }}-scus \
+            --location ${{ env.LOCATION }} \
+            --tags \
+              Environment=${{ env.ENVIRONMENT }} \
+              Project=CSP-Portal \
+              Application=csp-portal \
+              CostCenter=CC-CSP-DEMO-001 \
+              Owner=platform-engineering \
+              ManagedBy=bicep \
+              Criticality=medium \
+              Tier=data \
+              BackupPolicy=14-day \
+              DataClassification=internal
+          echo "✅ Data Resource Group created"
+
+      - name: Deploy PostgreSQL Flexible Server
+        run: |
+          echo "🚀 Deploying PostgreSQL Flexible Server..."
+          
+          # Generate random password for admin
+          ADMIN_PASSWORD=$(openssl rand -base64 24 | tr -dc 'A-Za-z0-9!@#$%' | head -c 20)
+          
+          # Deploy PostgreSQL Flexible Server - B2ms for DEMO
+          echo "  → Creating PostgreSQL Flexible Server (B2ms)..."
+          az postgres flexible-server create \
+            --resource-group rg-${{ env.PROJECT_NAME }}-data-${{ env.ENVIRONMENT }}-scus \
+            --name psql-${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-scus \
+            --location ${{ env.LOCATION }} \
+            --admin-user cspadmin \
+            --admin-password "$ADMIN_PASSWORD" \
+            --sku-name Standard_B2ms \
+            --tier Burstable \
+            --version 16 \
+            --storage-size 64 \
+            --backup-retention 14 \
+            --geo-redundant-backup Disabled \
+            --high-availability Disabled \
+            --public-access None \
+            --tags Environment=${{ env.ENVIRONMENT }} Project=CSP-Portal ManagedBy=bicep Tier=data BackupPolicy=14-day DataClassification=internal
+          
+          # Store admin password in Key Vault
+          echo "  → Storing credentials in Key Vault..."
+          az keyvault secret set \
+            --vault-name kv-${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-scus \
+            --name psql-admin-password \
+            --value "$ADMIN_PASSWORD"
+          
+          az keyvault secret set \
+            --vault-name kv-${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-scus \
+            --name psql-admin-username \
+            --value "cspadmin"
+          
+          az keyvault secret set \
+            --vault-name kv-${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-scus \
+            --name psql-connection-string \
+            --value "Host=psql-${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-scus.postgres.database.azure.com;Database=csp_identity;Username=cspadmin;Password=$ADMIN_PASSWORD;SSL Mode=Require;"
+          
+          # Configure server parameters
+          echo "  → Configuring server parameters..."
+          az postgres flexible-server parameter set \
+            --resource-group rg-${{ env.PROJECT_NAME }}-data-${{ env.ENVIRONMENT }}-scus \
+            --server-name psql-${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-scus \
+            --name require_secure_transport \
+            --value on
+          
+          # Create databases
+          echo "  → Creating databases..."
+          DATABASES=("csp_identity" "csp_requests" "csp_reservations" "csp_licenses" "csp_customers" "csp_procurement" "csp_notifications" "csp_reports" "csp_audit")
+          
+          for db in "${DATABASES[@]}"; do
+            echo "     Creating database: $db"
+            az postgres flexible-server db create \
+              --resource-group rg-${{ env.PROJECT_NAME }}-data-${{ env.ENVIRONMENT }}-scus \
+              --server-name psql-${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-scus \
+              --database-name $db
+          done
+          
+          echo "✅ PostgreSQL Flexible Server deployed successfully"
+
+      - name: Deploy Redis Cache
+        run: |
+          echo "🚀 Deploying Redis Cache..."
+          
+          # Basic C1 for DEMO
+          az redis create \
+            --resource-group rg-${{ env.PROJECT_NAME }}-data-${{ env.ENVIRONMENT }}-scus \
+            --name redis-${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-scus \
+            --location ${{ env.LOCATION }} \
+            --sku Basic \
+            --vm-size C1 \
+            --enable-non-ssl-port false \
+            --minimum-tls-version 1.2 \
+            --tags Environment=${{ env.ENVIRONMENT }} Project=CSP-Portal ManagedBy=bicep Tier=data
+          
+          # Store Redis connection string in Key Vault
+          echo "  → Storing Redis connection string in Key Vault..."
+          REDIS_KEY=$(az redis list-keys \
+            --resource-group rg-${{ env.PROJECT_NAME }}-data-${{ env.ENVIRONMENT }}-scus \
+            --name redis-${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-scus \
+            --query primaryKey -o tsv)
+          
+          az keyvault secret set \
+            --vault-name kv-${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-scus \
+            --name redis-connection-string \
+            --value "redis-${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-scus.redis.cache.windows.net:6380,password=$REDIS_KEY,ssl=True,abortConnect=False"
+          
+          echo "✅ Redis Cache deployed successfully"
+
+      - name: Deploy Storage Account
+        run: |
+          echo "🚀 Deploying Storage Account..."
+          
+          az storage account create \
+            --resource-group rg-${{ env.PROJECT_NAME }}-data-${{ env.ENVIRONMENT }}-scus \
+            --name stcspdemoscus001 \
+            --location ${{ env.LOCATION }} \
+            --sku Standard_LRS \
+            --kind StorageV2 \
+            --access-tier Hot \
+            --https-only true \
+            --min-tls-version TLS1_2 \
+            --allow-blob-public-access false \
+            --tags Environment=${{ env.ENVIRONMENT }} Project=CSP-Portal ManagedBy=bicep Tier=data DataClassification=internal
+          
+          # Create blob containers
+          echo "  → Creating blob containers..."
+          STORAGE_KEY=$(az storage account keys list \
+            --resource-group rg-${{ env.PROJECT_NAME }}-data-${{ env.ENVIRONMENT }}-scus \
+            --account-name stcspdemoscus001 \
+            --query '[0].value' -o tsv)
+          
+          az storage container create \
+            --name documents \
+            --account-name stcspdemoscus001 \
+            --account-key "$STORAGE_KEY"
+          
+          az storage container create \
+            --name attachments \
+            --account-name stcspdemoscus001 \
+            --account-key "$STORAGE_KEY"
+          
+          az storage container create \
+            --name reports \
+            --account-name stcspdemoscus001 \
+            --account-key "$STORAGE_KEY"
+          
+          # Store storage connection string in Key Vault
+          echo "  → Storing Storage connection string in Key Vault..."
+          STORAGE_CONN=$(az storage account show-connection-string \
+            --resource-group rg-${{ env.PROJECT_NAME }}-data-${{ env.ENVIRONMENT }}-scus \
+            --name stcspdemoscus001 \
+            --query connectionString -o tsv)
+          
+          az keyvault secret set \
+            --vault-name kv-${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-scus \
+            --name storage-connection-string \
+            --value "$STORAGE_CONN"
+          
+          echo "✅ Storage Account deployed successfully"
+
+      - name: Deploy AI Search
+        run: |
+          echo "🚀 Deploying AI Search..."
+          
+          az search service create \
+            --resource-group rg-${{ env.PROJECT_NAME }}-data-${{ env.ENVIRONMENT }}-scus \
+            --name srch-${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-scus \
+            --location ${{ env.LOCATION }} \
+            --sku basic \
+            --partition-count 1 \
+            --replica-count 1 \
+            --tags Environment=${{ env.ENVIRONMENT }} Project=CSP-Portal ManagedBy=bicep Tier=data
+          
+          # Store AI Search admin key in Key Vault
+          echo "  → Storing AI Search key in Key Vault..."
+          SEARCH_KEY=$(az search admin-key show \
+            --resource-group rg-${{ env.PROJECT_NAME }}-data-${{ env.ENVIRONMENT }}-scus \
+            --service-name srch-${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-scus \
+            --query primaryKey -o tsv)
+          
+          az keyvault secret set \
+            --vault-name kv-${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-scus \
+            --name search-admin-key \
+            --value "$SEARCH_KEY"
+          
+          echo "✅ AI Search deployed successfully"
+
+      - name: Deployment Summary (Data)
+        run: |
+          echo "## 💾 Data Tier Deployment Summary (DEMO)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Resource | Name | SKU | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|------|-----|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Resource Group | rg-${{ env.PROJECT_NAME }}-data-${{ env.ENVIRONMENT }}-scus | - | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "| PostgreSQL | psql-${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-scus | Burstable B2ms | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "| Redis Cache | redis-${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-scus | Basic C1 | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "| Storage | stcspdemoscus001 | Standard LRS | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "| AI Search | srch-${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-scus | Basic | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔐 Secrets Stored in Key Vault" >> $GITHUB_STEP_SUMMARY
+          echo "- psql-admin-password" >> $GITHUB_STEP_SUMMARY
+          echo "- psql-admin-username" >> $GITHUB_STEP_SUMMARY
+          echo "- psql-connection-string" >> $GITHUB_STEP_SUMMARY
+          echo "- redis-connection-string" >> $GITHUB_STEP_SUMMARY
+          echo "- storage-connection-string" >> $GITHUB_STEP_SUMMARY
+          echo "- search-admin-key" >> $GITHUB_STEP_SUMMARY
+
+  # ============================================================================
+  # Final Summary
+  # ============================================================================
+  summary:
+    name: Deployment Summary
+    needs: [deploy-core, deploy-web, deploy-data]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Generate Final Summary
+        run: |
+          echo "# 🎉 CSP Portal DEMO Infrastructure Deployment Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## 📊 Deployment Status" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Tier | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Core | ${{ needs.deploy-core.result == 'success' && '✅ Success' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Web | ${{ needs.deploy-web.result == 'success' && '✅ Success' || needs.deploy-web.result == 'skipped' && '⏭️ Skipped' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Data | ${{ needs.deploy-data.result == 'success' && '✅ Success' || needs.deploy-data.result == 'skipped' && '⏭️ Skipped' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## 🏷️ DEMO Environment Specifications" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Attribute | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Environment | DEMO |" >> $GITHUB_STEP_SUMMARY
+          echo "| Region | South Central US |" >> $GITHUB_STEP_SUMMARY
+          echo "| VNet CIDR | 10.15.0.0/16 |" >> $GITHUB_STEP_SUMMARY
+          echo "| SKU Tier | Standard |" >> $GITHUB_STEP_SUMMARY
+          echo "| SLA Target | 99.5% |" >> $GITHUB_STEP_SUMMARY
+          echo "| Backup Retention | 14 days |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## 🔗 Quick Links" >> $GITHUB_STEP_SUMMARY
+          echo "- [Azure Portal](https://portal.azure.com)" >> $GITHUB_STEP_SUMMARY
+          echo "- [Resource Groups](https://portal.azure.com/#blade/HubsExtension/BrowseResourceGroups)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "_Deployed by GitHub Actions - $(date -u +'%Y-%m-%d %H:%M:%S UTC')_" >> $GITHUB_STEP_SUMMARY

@@ -1,77 +1,77 @@
-name: CSP App Deploy - DEV
+name: Build and Deploy
 
 on:
-  workflow_run:
-    workflows: ["CSP Infra Deploy - DEV"]
-    types:
-      - completed
-  workflow_dispatch:
-
-permissions:
-  id-token: write
-  contents: read
+  push:
+    branches:
+      - feature/dev
 
 env:
-  ENVIRONMENT: dev
-  WEBAPP_NAME: app-csp-web-dev-scus
-  RESOURCE_GROUP: rg-csp-web-dev-scus
+  RESOURCE_GROUP: rg-csp-web-demo-scus
+  WEBAPP_NAME: asp-csp-web-demo-scus
+  SLOT_NAME: staging
 
 jobs:
-  build-and-deploy:
-    name: Build & Deploy App (DEV)
+  backend-deploy:
+    name: Build & Deploy Backend (.NET API)
     runs-on: ubuntu-latest
 
-    # ✅ Only run if infra workflow succeeded OR manual trigger
-    if: >
-      github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
-
     steps:
-      - name: Checkout
+      - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Azure CLI login with individual parameters
+        run: |
+          az login --service-principal \
+            -u "${{ secrets.AZURE_CLIENT_ID }}" \
+            -p "${{ secrets.AZURE_CLIENT_SECRET }}" \
+            --tenant "${{ secrets.AZURE_TENANT_ID }}"
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: 8.0.x
+          dotnet-version: "8.0.x"
 
-      - name: Restore
-        run: dotnet restore src/web
-
-      - name: Build
-        run: dotnet build src/web --configuration Release
-
-      - name: Test
-        run: dotnet test src/web
-
-      - name: Publish
+      # ⭐ FIXED: Publish ONLY correct csproj
+      - name: Publish Backend API
         run: |
-          dotnet publish src/web \
-            -c Release \
-            -o publish
+          dotnet publish src/csp.api/csp.api.csproj -c Release -o backend-publish
 
-      - name: Azure Login
-        uses: azure/login@v2
-        with:
-          creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}"}'
-
-      - name: Deploy to Staging Slot
+      - name: Deploy Backend to Azure Web App
         uses: azure/webapps-deploy@v3
         with:
           app-name: ${{ env.WEBAPP_NAME }}
-          slot-name: staging
-          package: publish
+          package: ./backend-publish
 
-      - name: Swap Slots
-        run: |
-          az webapp deployment slot swap \
-            --resource-group $RESOURCE_GROUP \
-            --name $WEBAPP_NAME \
-            --slot staging
 
-      - name: Deployment Summary
+  frontend-deploy:
+    name: Build & Deploy Frontend (.NET UI)
+    runs-on: ubuntu-latest
+    needs: backend-deploy
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Azure CLI login with individual parameters
         run: |
-          echo "## 🌐 Application Deployment Completed" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- Web App: $WEBAPP_NAME" >> $GITHUB_STEP_SUMMARY
-          echo "- Environment: DEV" >> $GITHUB_STEP_SUMMARY
+          az login --service-principal \
+            -u "${{ secrets.AZURE_CLIENT_ID }}" \
+            -p "${{ secrets.AZURE_CLIENT_SECRET }}" \
+            --tenant "${{ secrets.AZURE_TENANT_ID }}"
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      # ⭐ FIXED: Publish correct frontend UI project
+      - name: Publish Frontend UI
+        run: |
+          dotnet publish frontend/CloudSolutionProvider/CloudSolutionProvider-UI/*.csproj -c Release -o frontend-publish
+
+      - name: Deploy Frontend to Slot
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ env.WEBAPP_NAME }}
+          slot-name: ${{ env.SLOT_NAME }}
+          package: ./frontend-publish

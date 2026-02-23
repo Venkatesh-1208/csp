@@ -1,77 +1,116 @@
-name: Build and Deploy
+# ============================================================================
+# CSP Portal - Terraform Infrastructure Deployment (DEMO)
+# ============================================================================
+
+name: Terraform Deploy DEMO
 
 on:
   push:
-    branches:
-      - feature/dev
+    branches: 
+      - feature/demo
+    paths:
+      - 'infra/terraform/**'
+      - '.github/workflows/terraform-demo.yml'
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Terraform action to perform'
+        required: true
+        default: 'plan'
+        type: choice
+        options:
+          - plan
+          - apply
+          - destroy
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
 
 env:
-  RESOURCE_GROUP: rg-csp-web-demo-scus
-  WEBAPP_NAME: asp-csp-web-demo-scus
-  SLOT_NAME: staging
+  AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+  AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID_DEMO }}
+  AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+  AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+  TF_VAR_postgres_admin_username: ${{ secrets.POSTGRES_ADMIN_USERNAME }}
+  TF_VAR_postgres_admin_password: ${{ secrets.POSTGRES_ADMIN_PASSWORD }}
+  ENVIRONMENT: demo
+  TERRAFORM_VERSION: 1.6.0
 
 jobs:
-  backend-deploy:
-    name: Build & Deploy Backend (.NET API)
+  terraform-plan:
+    name: Terraform Plan
     runs-on: ubuntu-latest
-
+    defaults:
+      run:
+        working-directory: ./infra/terraform
     steps:
-      - name: Checkout code
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Azure CLI login with individual parameters
-        run: |
-          az login --service-principal \
-            -u "${{ secrets.AZURE_CLIENT_ID }}" \
-            -p "${{ secrets.AZURE_CLIENT_SECRET }}" \
-            --tenant "${{ secrets.AZURE_TENANT_ID }}"
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
         with:
-          dotnet-version: "8.0.x"
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
 
-      # ⭐ FIXED: Publish ONLY correct csproj
-      - name: Publish Backend API
-        run: |
-          dotnet publish src/csp.api/csp.api.csproj -c Release -o backend-publish
-
-      - name: Deploy Backend to Azure Web App
-        uses: azure/webapps-deploy@v3
+      - name: Azure Login
+        uses: azure/login@v2
         with:
-          app-name: ${{ env.WEBAPP_NAME }}
-          package: ./backend-publish
+          creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID_DEMO }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}"}'
 
+      - name: Terraform Init
+        run: terraform init -upgrade
 
-  frontend-deploy:
-    name: Build & Deploy Frontend (.NET UI)
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Terraform Plan
+        run: |
+          terraform plan \
+            -var-file="environments/${{ env.ENVIRONMENT }}.tfvars" \
+            -out=tfplan
+
+      - name: Save Plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-demo
+          path: infra/terraform/tfplan
+          retention-days: 5
+
+  terraform-apply:
+    name: Terraform Apply
+    needs: terraform-plan
     runs-on: ubuntu-latest
-    needs: backend-deploy
-
+    if: |
+      github.event_name == 'push' || 
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'apply')
+    defaults:
+      run:
+        working-directory: ./infra/terraform
     steps:
-      - name: Checkout code
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Azure CLI login with individual parameters
-        run: |
-          az login --service-principal \
-            -u "${{ secrets.AZURE_CLIENT_ID }}" \
-            -p "${{ secrets.AZURE_CLIENT_SECRET }}" \
-            --tenant "${{ secrets.AZURE_TENANT_ID }}"
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
         with:
-          dotnet-version: "8.0.x"
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
 
-      # ⭐ FIXED: Publish correct frontend UI project
-      - name: Publish Frontend UI
-        run: |
-          dotnet publish frontend/CloudSolutionProvider/CloudSolutionProvider-UI/*.csproj -c Release -o frontend-publish
-
-      - name: Deploy Frontend to Slot
-        uses: azure/webapps-deploy@v3
+      - name: Azure Login
+        uses: azure/login@v2
         with:
-          app-name: ${{ env.WEBAPP_NAME }}
-          slot-name: ${{ env.SLOT_NAME }}
-          package: ./frontend-publish
+          creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID_DEMO }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}"}'
+
+      - name: Terraform Init
+        run: terraform init -upgrade
+
+      - name: Download Plan
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-demo
+          path: infra/terraform/
+
+      # - name: Terraform Apply
+      #   run: terraform apply -auto-approve tfplan

@@ -36,3 +36,24 @@ variable "psql_storage_mb" { type = number; default = 32768 }
 variable "redis_sku_name" { type = string; default = "Basic" }
 variable "redis_capacity" { type = number; default = 0 }
 variable "storage_replication" { type = string; default = "LRS" }
+
+# ---------------------------------------------------------------------------
+# Custom Resource Names
+# ---------------------------------------------------------------------------
+variable "platform_rg_name" { type = string; default = "" }
+variable "vnet_name" { type = string; default = "" }
+variable "snet_app_name" { type = string; default = "" }
+variable "snet_data_name" { type = string; default = "" }
+variable "law_name" { type = string; default = "" }
+variable "kv_name" { type = string; default = "" }
+
+variable "web_rg_name" { type = string; default = "" }
+variable "web_asp_name" { type = string; default = "" }
+variable "web_app_name" { type = string; default = "" }
+variable "web_appi_name" { type = string; default = "" }
+
+variable "data_rg_name" { type = string; default = "" }
+variable "data_psql_name" { type = string; default = "" }
+variable "data_redis_name" { type = string; default = "" }
+variable "data_storage_name" { type = string; default = "" }
+variable "data_search_name" { type = string; default = "" }

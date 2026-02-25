@@ -1,0 +1,38 @@
+# ---------------------------------------------------------------------------
+# Azure Authentication
+# ---------------------------------------------------------------------------
+variable "azure_tenant_id" { type = string; sensitive = true }
+variable "azure_subscription_id" { type = string; sensitive = true }
+variable "azure_client_id" { type = string; sensitive = true }
+variable "azure_client_secret" { type = string; sensitive = true }
+
+# ---------------------------------------------------------------------------
+# Environment Settings
+# ---------------------------------------------------------------------------
+variable "environment" { type = string; default = "dev" }
+variable "project_name" { type = string; default = "csp" }
+variable "location" { type = string; default = "southcentralus" }
+
+# ---------------------------------------------------------------------------
+# Deployment Flags
+# ---------------------------------------------------------------------------
+variable "deploy_vnet" { type = bool; default = true }
+variable "deploy_log_analytics" { type = bool; default = true }
+variable "deploy_key_vault" { type = bool; default = true }
+variable "deploy_web" { type = bool; default = true }
+variable "deploy_data" { type = bool; default = true }
+
+# ---------------------------------------------------------------------------
+# Resource Parameters
+# ---------------------------------------------------------------------------
+variable "vnet_address_space" { type = string; default = "10.10.0.0/16" }
+variable "snet_app_prefix" { type = string; default = "10.10.1.0/24" }
+variable "snet_data_prefix" { type = string; default = "10.10.3.0/24" }
+
+variable "web_sku_name" { type = string; default = "B1" }
+
+variable "psql_sku_name" { type = string; default = "B_Standard_B1ms" }
+variable "psql_storage_mb" { type = number; default = 32768 }
+variable "redis_sku_name" { type = string; default = "Basic" }
+variable "redis_capacity" { type = number; default = 0 }
+variable "storage_replication" { type = string; default = "LRS" }

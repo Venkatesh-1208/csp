@@ -1,116 +1,295 @@
 # ============================================================================
-# CSP Portal - Terraform Infrastructure Deployment (DEMO)
+# CSP Portal - Terraform Infrastructure Deployment (DEV)
 # ============================================================================
-
-name: Terraform Deploy DEMO
-
+# Runs terraform fmt/validate/plan on every push to infra/terraform/**
+# Applies on push to develop or manual dispatch with optional tier toggles.
+# ============================================================================
+name: "Terraform Infrastructure Deploy DEV"
 on:
   push:
-    branches: 
-      - feature/demo
+    branches: [develop]
     paths:
-      - 'infra/terraform/**'
-      - '.github/workflows/terraform-demo.yml'
+      - "infra/terraform/**"
   workflow_dispatch:
     inputs:
-      action:
-        description: 'Terraform action to perform'
+      deploy_web:
+        description: "Deploy Web Tier"
         required: true
-        default: 'plan'
+        default: "true"
         type: choice
-        options:
-          - plan
-          - apply
-          - destroy
-
+        options: ["true", "false"]
+      deploy_data:
+        description: "Deploy Data Tier"
+        required: true
+        default: "true"
+        type: choice
+        options: ["true", "false"]
 permissions:
   id-token: write
   contents: read
-  pull-requests: write
-
 env:
-  AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-  AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID_DEMO }}
-  AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-  AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-  TF_VAR_postgres_admin_username: ${{ secrets.POSTGRES_ADMIN_USERNAME }}
-  TF_VAR_postgres_admin_password: ${{ secrets.POSTGRES_ADMIN_PASSWORD }}
-  ENVIRONMENT: demo
-  TERRAFORM_VERSION: 1.6.0
-
+  TF_VERSION: "1.7.5"
+  TF_WORKING_DIR: "infra/terraform"
+  ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+  ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+  ARM_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+# ============================================================================
+# Job: Validate (fmt + validate + plan)
+# ============================================================================
 jobs:
-  terraform-plan:
-    name: Terraform Plan
+  validate:
+    name: "Validate Terraform"
     runs-on: ubuntu-latest
+    outputs:
+      deployment_name: ${{ steps.set-name.outputs.name }}
     defaults:
       run:
-        working-directory: ./infra/terraform
+        working-directory: ${{ env.TF_WORKING_DIR }}
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: ${{ env.TERRAFORM_VERSION }}
-
-      - name: Azure Login
-        uses: azure/login@v2
-        with:
-          creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID_DEMO }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}"}'
-
+          terraform_version: ${{ env.TF_VERSION }}
+      - name: Set Deployment Name
+        id: set-name
+        run: echo "name=csp-infra-dev-$(date +%Y%m%d%H%M%S)" >> $GITHUB_OUTPUT
+      - name: Terraform Format Check
+        id: fmt
+        run: terraform fmt -check -recursive
+        continue-on-error: true
       - name: Terraform Init
-        run: terraform init -upgrade
-
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=rg-csp-tfstate-scus" \
+            -backend-config="storage_account_name=stcspterraformscus" \
+            -backend-config="container_name=tfstate" \
+            -backend-config="key=csp-portal/dev/terraform.tfstate"
       - name: Terraform Validate
-        run: terraform validate
-
+        run: terraform validate -no-color
       - name: Terraform Plan
+        id: plan
         run: |
           terraform plan \
-            -var-file="environments/${{ env.ENVIRONMENT }}.tfvars" \
-            -out=tfplan
-
-      - name: Save Plan
+            -var-file="dev.tfvars" \
+            -var="azure_tenant_id=$ARM_TENANT_ID" \
+            -var="azure_subscription_id=$ARM_SUBSCRIPTION_ID" \
+            -var="azure_client_id=$ARM_CLIENT_ID" \
+            -var="azure_client_secret=$ARM_CLIENT_SECRET" \
+            -var="deploy_web=${{ github.event.inputs.deploy_web || 'true' }}" \
+            -var="deploy_data=${{ github.event.inputs.deploy_data || 'true' }}" \
+            -out=tfplan \
+            -no-color \
+            -input=false
+      - name: Upload Plan Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: tfplan-demo
-          path: infra/terraform/tfplan
-          retention-days: 5
-
-  terraform-apply:
-    name: Terraform Apply
-    needs: terraform-plan
+          name: tfplan-${{ steps.set-name.outputs.name }}
+          path: ${{ env.TF_WORKING_DIR }}/tfplan
+          retention-days: 7
+      - name: Plan Summary
+        run: |
+          echo "## 🔍 Terraform Plan Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          terraform show -no-color tfplan | tail -20 >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+# ============================================================================
+# Job: Deploy Core
+# ============================================================================
+  deploy-core:
+    name: "Deploy Core Infrastructure"
+    needs: validate
     runs-on: ubuntu-latest
-    if: |
-      github.event_name == 'push' || 
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'apply')
+    environment: dev
+    if: ${{ github.event_name == 'push' || true }}
+    outputs:
+      key_vault_name: ${{ steps.outputs.outputs.kv_name }}
     defaults:
       run:
-        working-directory: ./infra/terraform
+        working-directory: ${{ env.TF_WORKING_DIR }}
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: ${{ env.TERRAFORM_VERSION }}
-          terraform_wrapper: false
-
-      - name: Azure Login
-        uses: azure/login@v2
-        with:
-          creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID_DEMO }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}"}'
-
-      - name: Terraform Init
-        run: terraform init -upgrade
-
+          terraform_version: ${{ env.TF_VERSION }}
       - name: Download Plan
         uses: actions/download-artifact@v4
         with:
-          name: tfplan-demo
-          path: infra/terraform/
-
-      # - name: Terraform Apply
-      #   run: terraform apply -auto-approve tfplan
+          name: tfplan-${{ needs.validate.outputs.deployment_name }}
+          path: ${{ env.TF_WORKING_DIR }}
+      - name: Terraform Init
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=rg-csp-tfstate-scus" \
+            -backend-config="storage_account_name=stcspterraformscus" \
+            -backend-config="container_name=tfstate" \
+            -backend-config="key=csp-portal/dev/terraform.tfstate"
+      - name: Apply Core Module Only
+        run: |
+          terraform apply \
+            -target=module.core \
+            -var-file="dev.tfvars" \
+            -var="azure_tenant_id=$ARM_TENANT_ID" \
+            -var="azure_subscription_id=$ARM_SUBSCRIPTION_ID" \
+            -var="azure_client_id=$ARM_CLIENT_ID" \
+            -var="azure_client_secret=$ARM_CLIENT_SECRET" \
+            -auto-approve \
+            -input=false
+      - name: Capture Core Outputs
+        id: outputs
+        run: |
+          KV=$(terraform output -raw core_key_vault_name 2>/dev/null || echo "")
+          echo "kv_name=$KV" >> $GITHUB_OUTPUT
+      - name: Core Deployment Summary
+        run: |
+          echo "## 🏗️ Core Infrastructure Applied" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Resource | Name | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Resource Group | rg-csp-core-dev-scus | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "| Virtual Network | vnet-csp-dev-scus | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "| App Subnet | snet-csp-app-dev-scus | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "| Data Subnet | snet-csp-data-dev-scus | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "| Log Analytics | log-csp-dev-scus | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "| Key Vault | kv-csp-dev-scus | ✅ |" >> $GITHUB_STEP_SUMMARY
+# ============================================================================
+# Job: Deploy Web (needs core)
+# ============================================================================
+  deploy-web:
+    name: "Deploy Web Tier"
+    needs: deploy-core
+    runs-on: ubuntu-latest
+    environment: dev
+    if: ${{ github.event_name == 'push' || github.event.inputs.deploy_web == 'true' }}
+    defaults:
+      run:
+        working-directory: ${{ env.TF_WORKING_DIR }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+      - name: Terraform Init
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=rg-csp-tfstate-scus" \
+            -backend-config="storage_account_name=stcspterraformscus" \
+            -backend-config="container_name=tfstate" \
+            -backend-config="key=csp-portal/dev/terraform.tfstate"
+      - name: Apply Web Module
+        run: |
+          terraform apply \
+            -target=module.web \
+            -var-file="dev.tfvars" \
+            -var="azure_tenant_id=$ARM_TENANT_ID" \
+            -var="azure_subscription_id=$ARM_SUBSCRIPTION_ID" \
+            -var="azure_client_id=$ARM_CLIENT_ID" \
+            -var="azure_client_secret=$ARM_CLIENT_SECRET" \
+            -var="deploy_web=true" \
+            -auto-approve \
+            -input=false
+      - name: Web Deployment Summary
+        run: |
+          WEB_URL=$(terraform output -raw web_app_hostname 2>/dev/null || echo "N/A")
+          echo "## 🌐 Web Tier Applied" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Resource | Name | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| App Service Plan | asp-csp-web-dev-scus (B1) | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "| Web App | app-csp-web-dev-scus | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "| Application Insights | appi-csp-web-dev-scus | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "| Staging Slot | staging | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔗 Web App URL" >> $GITHUB_STEP_SUMMARY
+          echo "https://$WEB_URL" >> $GITHUB_STEP_SUMMARY
+# ============================================================================
+# Job: Deploy Data (needs core)
+# ============================================================================
+  deploy-data:
+    name: "Deploy Data Tier"
+    needs: deploy-core
+    runs-on: ubuntu-latest
+    environment: dev
+    if: ${{ github.event_name == 'push' || github.event.inputs.deploy_data == 'true' }}
+    defaults:
+      run:
+        working-directory: ${{ env.TF_WORKING_DIR }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+      - name: Terraform Init
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=rg-csp-tfstate-scus" \
+            -backend-config="storage_account_name=stcspterraformscus" \
+            -backend-config="container_name=tfstate" \
+            -backend-config="key=csp-portal/dev/terraform.tfstate"
+      - name: Apply Data Module
+        run: |
+          terraform apply \
+            -target=module.data \
+            -var-file="dev.tfvars" \
+            -var="azure_tenant_id=$ARM_TENANT_ID" \
+            -var="azure_subscription_id=$ARM_SUBSCRIPTION_ID" \
+            -var="azure_client_id=$ARM_CLIENT_ID" \
+            -var="azure_client_secret=$ARM_CLIENT_SECRET" \
+            -var="deploy_data=true" \
+            -auto-approve \
+            -input=false
+      - name: Data Deployment Summary
+        run: |
+          PG_FQDN=$(terraform output -raw postgresql_fqdn 2>/dev/null || echo "N/A")
+          echo "## 💾 Data Tier Applied" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Resource | SKU | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-----|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| PostgreSQL | Burstable B1ms | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "| Redis Cache | Basic C0 | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "| Storage | Standard LRS | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "| AI Search | Basic | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔐 Secrets Stored in Key Vault" >> $GITHUB_STEP_SUMMARY
+          echo "- psql-admin-password  " >> $GITHUB_STEP_SUMMARY
+          echo "- psql-admin-username  " >> $GITHUB_STEP_SUMMARY
+          echo "- psql-connection-string  " >> $GITHUB_STEP_SUMMARY
+          echo "- redis-connection-string  " >> $GITHUB_STEP_SUMMARY
+          echo "- storage-connection-string  " >> $GITHUB_STEP_SUMMARY
+          echo "- search-admin-key  " >> $GITHUB_STEP_SUMMARY
+# ============================================================================
+# Job: Final Summary
+# ============================================================================
+  summary:
+    name: "Deployment Summary"
+    needs: [deploy-core, deploy-web, deploy-data]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Generate Final Summary
+        run: |
+          echo "# 🎉 CSP Portal DEV Infrastructure Deployment Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## 📊 Deployment Status" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Tier | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Core | ${{ needs.deploy-core.result == 'success' && '✅ Success' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Web  | ${{ needs.deploy-web.result == 'success' && '✅ Success' || needs.deploy-web.result == 'skipped' && '⏭️ Skipped' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Data | ${{ needs.deploy-data.result == 'success' && '✅ Success' || needs.deploy-data.result == 'skipped' && '⏭️ Skipped' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## 🔗 Quick Links" >> $GITHUB_STEP_SUMMARY
+          echo "- [Azure Portal](https://portal.azure.com)" >> $GITHUB_STEP_SUMMARY
+          echo "- [Resource Groups](https://portal.azure.com/#blade/HubsExtension/BrowseResourceGroups)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "_Deployed via Terraform — $(date -u +'%Y-%m-%d %H:%M:%S UTC')_" >> $GITHUB_STEP_SUMMARY

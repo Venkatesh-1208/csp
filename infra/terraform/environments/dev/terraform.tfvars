@@ -3,6 +3,9 @@
 # ---------------------------------------------------------------------------
 
 azure_subscription_id = "" # ENTER_SUBSCRIPTION_ID_HERE
+azure_tenant_id       = "" # ENTER_TENANT_ID_HERE
+azure_client_id       = "" # ENTER_CLIENT_ID_HERE
+azure_client_secret   = "" # ENTER_CLIENT_SECRET_HERE
 location              = "southcentralus"
 environment           = "dev"
 project_name          = "csp"

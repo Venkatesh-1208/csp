@@ -34,7 +34,7 @@ resource "azurerm_linux_web_app_slot" "staging" {
   app_service_id = azurerm_linux_web_app.this[0].id
 
   site_config {
-    always_on           = true
+    always_on           = var.always_on
     minimum_tls_version = "1.2"
     ftps_state          = "Disabled"
 

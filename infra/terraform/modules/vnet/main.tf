@@ -15,7 +15,7 @@ resource "azurerm_subnet" "app" {
   count                = var.deploy ? 1 : 0
   name                 = var.snet_app_name
   resource_group_name  = var.resource_group_name
-  virtual_network_name = azurerm_virtual_network.this[0].name
+  virtual_network_name = one(azurerm_virtual_network.this[*].name)
   address_prefixes     = [var.snet_app_prefix]
 
   delegation {

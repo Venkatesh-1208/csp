@@ -68,6 +68,6 @@ resource "azurerm_key_vault_secret" "admin_username" {
 resource "azurerm_key_vault_secret" "connection_string" {
   count = var.deploy && var.key_vault_id != null ? 1 : 0
   name  = "${var.name}-connection-string"
-  value = "Host=${one(azurerm_postgresql_flexible_server.this[*].fqdn)};Database=${length(var.databases) > 0 ? var.databases[0] : "postgres"};Username=${var.admin_username};Password=${one(random_password.psql_admin[*].result)};SSL Mode=Require;"
+  value = "Host=${one(azurerm_postgresql_flexible_server.this[*].fqdn)};Database=${try(var.databases[0], "postgres")};Username=${var.admin_username};Password=${one(random_password.psql_admin[*].result)};SSL Mode=Require;"
   key_vault_id = var.key_vault_id
 }

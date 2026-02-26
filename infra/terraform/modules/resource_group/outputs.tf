@@ -1,14 +1,14 @@
 output "name" {
   description = "Name of the resource group"
-  value       = try(azurerm_resource_group.this[0].name, null)
+  value       = one(azurerm_resource_group.this[*].name)
 }
 
 output "location" {
   description = "Location of the resource group"
-  value       = try(azurerm_resource_group.this[0].location, null)
+  value       = one(azurerm_resource_group.this[*].location)
 }
 
 output "id" {
   description = "Resource ID of the resource group"
-  value       = try(azurerm_resource_group.this[0].id, null)
+  value       = one(azurerm_resource_group.this[*].id)
 }

@@ -1,14 +1,14 @@
 output "vault_id" {
   description = "Resource ID of the Key Vault"
-  value       = try(azurerm_key_vault.this[0].id, null)
+  value       = one(azurerm_key_vault.this[*].id)
 }
 
 output "vault_uri" {
   description = "URI of the Key Vault"
-  value       = try(azurerm_key_vault.this[0].vault_uri, null)
+  value       = one(azurerm_key_vault.this[*].vault_uri)
 }
 
 output "vault_name" {
   description = "Name of the Key Vault"
-  value       = try(azurerm_key_vault.this[0].name, null)
+  value       = one(azurerm_key_vault.this[*].name)
 }

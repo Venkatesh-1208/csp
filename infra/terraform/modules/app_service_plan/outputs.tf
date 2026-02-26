@@ -1,3 +1,3 @@
-output "id" { value = try(azurerm_service_plan.this[0].id, null) }
-output "name" { value = try(azurerm_service_plan.this[0].name, null) }
-output "location" { value = try(azurerm_service_plan.this[0].location, null) }
+output "id" { value = one(azurerm_service_plan.this[*].id) }
+output "name" { value = one(azurerm_service_plan.this[*].name) }
+output "location" { value = one(azurerm_service_plan.this[*].location) }

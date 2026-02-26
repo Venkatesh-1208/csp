@@ -1,19 +1,19 @@
 output "vnet_id" {
   description = "Resource ID of the VNet"
-  value       = try(azurerm_virtual_network.this[0].id, null)
+  value       = one(azurerm_virtual_network.this[*].id)
 }
 
 output "vnet_name" {
   description = "Name of the VNet"
-  value       = try(azurerm_virtual_network.this[0].name, null)
+  value       = one(azurerm_virtual_network.this[*].name)
 }
 
 output "app_subnet_id" {
   description = "Resource ID of the app subnet"
-  value       = try(azurerm_subnet.app[0].id, null)
+  value       = one(azurerm_subnet.app[*].id)
 }
 
 output "data_subnet_id" {
   description = "Resource ID of the data subnet"
-  value       = try(azurerm_subnet.data[0].id, null)
+  value       = one(azurerm_subnet.data[*].id)
 }

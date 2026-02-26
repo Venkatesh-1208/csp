@@ -1,3 +1,3 @@
-output "id" { value = try(azurerm_application_insights.this[0].id, null) }
-output "instrumentation_key" { value = try(azurerm_application_insights.this[0].instrumentation_key, null); sensitive = true }
-output "connection_string" { value = try(azurerm_application_insights.this[0].connection_string, null); sensitive = true }
+output "id" { value = one(azurerm_application_insights.this[*].id) }
+output "instrumentation_key" { value = one(azurerm_application_insights.this[*].instrumentation_key); sensitive = true }
+output "connection_string" { value = one(azurerm_application_insights.this[*].connection_string); sensitive = true }

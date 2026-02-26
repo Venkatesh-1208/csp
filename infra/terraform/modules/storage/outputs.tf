@@ -1,3 +1,3 @@
-output "id" { value = try(azurerm_storage_account.this[0].id, null) }
-output "name" { value = try(azurerm_storage_account.this[0].name, null) }
-output "primary_connection_string" { value = try(azurerm_storage_account.this[0].primary_connection_string, null); sensitive = true }
+output "id" { value = one(azurerm_storage_account.this[*].id) }
+output "name" { value = one(azurerm_storage_account.this[*].name) }
+output "primary_connection_string" { value = one(azurerm_storage_account.this[*].primary_connection_string); sensitive = true }

@@ -1,3 +1,3 @@
-output "id" { value = try(azurerm_postgresql_flexible_server.this[0].id, null) }
-output "fqdn" { value = try(azurerm_postgresql_flexible_server.this[0].fqdn, null) }
-output "name" { value = try(azurerm_postgresql_flexible_server.this[0].name, null) }
+output "id" { value = one(azurerm_postgresql_flexible_server.this[*].id) }
+output "fqdn" { value = one(azurerm_postgresql_flexible_server.this[*].fqdn) }
+output "name" { value = one(azurerm_postgresql_flexible_server.this[*].name) }

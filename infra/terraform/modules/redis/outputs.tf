@@ -1,3 +1,3 @@
-output "id" { value = try(azurerm_redis_cache.this[0].id, null) }
-output "hostname" { value = try(azurerm_redis_cache.this[0].hostname, null) }
-output "primary_access_key" { value = try(azurerm_redis_cache.this[0].primary_access_key, null); sensitive = true }
+output "id" { value = one(azurerm_redis_cache.this[*].id) }
+output "hostname" { value = one(azurerm_redis_cache.this[*].hostname) }
+output "primary_access_key" { value = one(azurerm_redis_cache.this[*].primary_access_key); sensitive = true }

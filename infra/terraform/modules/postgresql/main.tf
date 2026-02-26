@@ -43,7 +43,7 @@ resource "azurerm_postgresql_flexible_server_configuration" "require_ssl" {
 }
 
 resource "azurerm_postgresql_flexible_server_database" "databases" {
-  for_each  = var.deploy ? toset(var.databases) : []
+  for_each  = var.deploy ? toset(var.databases) : toset([])
   name      = each.key
   server_id = azurerm_postgresql_flexible_server.this[0].id
   charset   = "UTF8"

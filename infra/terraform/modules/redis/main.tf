@@ -7,7 +7,7 @@ resource "azurerm_redis_cache" "this" {
   resource_group_name = var.resource_group_name
   location            = var.location
   capacity            = var.capacity
-  family              = var.capacity == 0 ? "C" : "P"
+  family              = contains(["Premium"], var.sku_name) ? "P" : "C"
   sku_name            = var.sku_name
   non_ssl_port_enabled = false
   minimum_tls_version = "1.2"

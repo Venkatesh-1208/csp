@@ -17,7 +17,7 @@ resource "azurerm_storage_account" "this" {
 }
 
 resource "azurerm_storage_container" "containers" {
-  for_each              = var.deploy ? toset(var.containers) : []
+  for_each              = var.deploy ? toset(var.containers) : toset([])
   name                  = each.key
   storage_account_id    = azurerm_storage_account.this[0].id
   container_access_type = "private"

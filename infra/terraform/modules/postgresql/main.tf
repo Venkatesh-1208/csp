@@ -15,7 +15,7 @@ resource "azurerm_postgresql_flexible_server" "this" {
   location               = var.location
   version                = "16"
   administrator_login    = var.admin_username
-  administrator_password = random_password.psql_admin[0].result
+  administrator_password = one(random_password.psql_admin[*].result)
   zone                   = "1"
 
   sku_name   = var.sku_name
@@ -38,14 +38,14 @@ resource "azurerm_postgresql_flexible_server" "this" {
 resource "azurerm_postgresql_flexible_server_configuration" "require_ssl" {
   count     = var.deploy ? 1 : 0
   name      = "require_secure_transport"
-  server_id = azurerm_postgresql_flexible_server.this[0].id
+  server_id = one(azurerm_postgresql_flexible_server.this[*].id)
   value     = "on"
 }
 
 resource "azurerm_postgresql_flexible_server_database" "databases" {
   for_each  = var.deploy ? toset(var.databases) : toset([])
   name      = each.key
-  server_id = azurerm_postgresql_flexible_server.this[0].id
+  server_id = one(azurerm_postgresql_flexible_server.this[*].id)
   charset   = "UTF8"
   collation = "en_US.utf8"
 }
@@ -54,7 +54,7 @@ resource "azurerm_postgresql_flexible_server_database" "databases" {
 resource "azurerm_key_vault_secret" "admin_password" {
   count        = var.deploy && var.key_vault_id != null ? 1 : 0
   name         = "${var.name}-admin-password"
-  value        = random_password.psql_admin[0].result
+  value        = one(random_password.psql_admin[*].result)
   key_vault_id = var.key_vault_id
 }
 
@@ -68,6 +68,6 @@ resource "azurerm_key_vault_secret" "admin_username" {
 resource "azurerm_key_vault_secret" "connection_string" {
   count = var.deploy && var.key_vault_id != null ? 1 : 0
   name  = "${var.name}-connection-string"
-  value = "Host=${azurerm_postgresql_flexible_server.this[0].fqdn};Database=${length(var.databases) > 0 ? var.databases[0] : "postgres"};Username=${var.admin_username};Password=${random_password.psql_admin[0].result};SSL Mode=Require;"
+  value = "Host=${one(azurerm_postgresql_flexible_server.this[*].fqdn)};Database=${length(var.databases) > 0 ? var.databases[0] : "postgres"};Username=${var.admin_username};Password=${one(random_password.psql_admin[*].result)};SSL Mode=Require;"
   key_vault_id = var.key_vault_id
 }

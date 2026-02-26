@@ -7,6 +7,10 @@ location              = "southcentralus"
 environment           = "prod"
 project_name          = "csp"
 
+azure_tenant_id       = "" # ENTER_TENANT_ID_HERE
+azure_client_id       = "" # ENTER_CLIENT_ID_HERE
+azure_client_secret   = "" # ENTER_CLIENT_SECRET_HERE
+
 # ── Network ──────────────────────────────────────────────────
 deploy_vnet          = true
 vnet_name            = "vnet-csp-prod-scus"
@@ -26,7 +30,6 @@ kv_name              = "kv-csp-prod-scus"
 
 # ── Web ──────────────────────────────────────────────────────
 deploy_web           = true
-web_rg_name          = "rg-csp-web-prod"
 web_asp_name         = "asp-csp-web-prod"
 web_app_name         = "app-csp-web-prod"
 web_appi_name        = "appi-csp-web-prod"
@@ -34,7 +37,6 @@ web_sku_name         = "P1v3"
 
 # ── Data ─────────────────────────────────────────────────────
 deploy_data          = true
-data_rg_name         = "rg-csp-data-prod"
 data_psql_name       = "psql-csp-prod"
 data_redis_name      = "redis-csp-prod"
 data_storage_name    = "stcspprodscus001"

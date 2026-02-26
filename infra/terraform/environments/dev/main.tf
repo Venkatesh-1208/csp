@@ -40,7 +40,6 @@ module "network" {
   snet_data_prefix    = var.snet_data_prefix
   tags                = local.common_tags
 
-  depends_on = [module.resource_group]
 }
 
 # ---------------------------------------------------------------------------
@@ -56,7 +55,6 @@ module "monitoring" {
   sku                 = "PerGB2018"
   tags                = local.common_tags
 
-  depends_on = [module.resource_group]
 }
 
 # ---------------------------------------------------------------------------
@@ -71,7 +69,6 @@ module "security" {
   location            = var.location
   tags                = local.common_tags
 
-  depends_on = [module.resource_group]
 }
 
 # ---------------------------------------------------------------------------

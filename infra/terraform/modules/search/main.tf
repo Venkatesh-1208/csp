@@ -15,6 +15,6 @@ resource "azurerm_search_service" "this" {
 resource "azurerm_key_vault_secret" "admin_key" {
   count        = var.deploy && var.key_vault_id != null ? 1 : 0
   name         = "${var.name}-admin-key"
-  value        = azurerm_search_service.this[0].primary_key
+  value        = one(azurerm_search_service.this[*].primary_key)
   key_vault_id = var.key_vault_id
 }

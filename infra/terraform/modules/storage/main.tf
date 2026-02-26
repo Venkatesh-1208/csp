@@ -19,13 +19,13 @@ resource "azurerm_storage_account" "this" {
 resource "azurerm_storage_container" "containers" {
   for_each              = var.deploy ? toset(var.containers) : toset([])
   name                  = each.key
-  storage_account_id    = azurerm_storage_account.this[0].id
+  storage_account_id    = one(azurerm_storage_account.this[*].id)
   container_access_type = "private"
 }
 
 resource "azurerm_key_vault_secret" "connection_string" {
   count = var.deploy && var.key_vault_id != null ? 1 : 0
   name  = "${var.name}-connection-string"
-  value = azurerm_storage_account.this[0].primary_connection_string
+  value = one(azurerm_storage_account.this[*].primary_connection_string)
   key_vault_id = var.key_vault_id
 }

@@ -29,7 +29,6 @@ kv_name              = "kv-csp-dev-scus"
 
 # ── Web ──────────────────────────────────────────────────────
 deploy_web           = true
-web_rg_name          = "rg-csp-web-dev"
 web_asp_name         = "asp-csp-web-dev"
 web_app_name         = "app-csp-web-dev"
 web_appi_name        = "appi-csp-web-dev"
@@ -37,7 +36,6 @@ web_sku_name         = "B1"
 
 # ── Data ─────────────────────────────────────────────────────
 deploy_data          = true
-data_rg_name         = "rg-csp-data-dev"
 data_psql_name       = "psql-csp-dev"
 data_redis_name      = "redis-csp-dev"
 data_storage_name    = "stcspdevscus001"

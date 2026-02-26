@@ -31,7 +31,7 @@ resource "azurerm_linux_web_app" "this" {
 resource "azurerm_linux_web_app_slot" "staging" {
   count          = var.deploy && var.staging_slot_enabled ? 1 : 0
   name           = "staging"
-  app_service_id = azurerm_linux_web_app.this[0].id
+  app_service_id = one(azurerm_linux_web_app.this[*].id)
 
   site_config {
     always_on           = var.always_on

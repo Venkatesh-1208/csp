@@ -22,7 +22,7 @@ resource "azurerm_key_vault" "this" {
 # Grant the deploying Service Principal Key Vault Secrets Officer
 resource "azurerm_role_assignment" "kv_sp_secrets_officer" {
   count                = var.deploy ? 1 : 0
-  scope                = azurerm_key_vault.this[0].id
+  scope                = one(azurerm_key_vault.this[*].id)
   role_definition_name = "Key Vault Secrets Officer"
   principal_id         = data.azurerm_client_config.current.object_id
 }

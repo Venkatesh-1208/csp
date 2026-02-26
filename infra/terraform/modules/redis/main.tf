@@ -17,6 +17,6 @@ resource "azurerm_redis_cache" "this" {
 resource "azurerm_key_vault_secret" "connection_string" {
   count = var.deploy && var.key_vault_id != null ? 1 : 0
   name  = "${var.name}-connection-string"
-  value = "${azurerm_redis_cache.this[0].hostname}:6380,password=${azurerm_redis_cache.this[0].primary_access_key},ssl=True,abortConnect=False"
+  value = "${one(azurerm_redis_cache.this[*].hostname)}:6380,password=${one(azurerm_redis_cache.this[*].primary_access_key)},ssl=True,abortConnect=False"
   key_vault_id = var.key_vault_id
 }

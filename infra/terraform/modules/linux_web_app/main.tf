@@ -14,9 +14,9 @@ resource "azurerm_linux_web_app" "this" {
   }
 
   site_config {
-    always_on        = var.always_on
+    always_on           = var.always_on
     minimum_tls_version = "1.2"
-    ftps_state       = "Disabled"
+    ftps_state          = "Disabled"
 
     application_stack {
       dotnet_version = "8.0"

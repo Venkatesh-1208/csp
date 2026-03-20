@@ -5,9 +5,9 @@
 locals {
   location_short = "scus" # mapped from southcentralus
   common_tags = {
-    Environment    = var.environment
-    Project        = var.project_name
-    ManagedBy      = "terraform"
+    Environment = var.environment
+    Project     = var.project_name
+    ManagedBy   = "terraform"
   }
 }
 
@@ -105,12 +105,12 @@ module "app_service_plan" {
 module "web_app" {
   source = "../../modules/linux_web_app"
 
-  deploy              = var.deploy_web
-  name                = var.web_app_name != "" ? var.web_app_name : "app-${var.project_name}-web-${var.environment}-${local.location_short}"
-  resource_group_name = module.resource_group.name
-  location            = var.location
-  service_plan_id     = module.app_service_plan.id
-  always_on           = var.web_sku_name == "F1" || var.web_sku_name == "D1" || var.web_sku_name == "B1" ? false : true
+  deploy               = var.deploy_web
+  name                 = var.web_app_name != "" ? var.web_app_name : "app-${var.project_name}-web-${var.environment}-${local.location_short}"
+  resource_group_name  = module.resource_group.name
+  location             = var.location
+  service_plan_id      = module.app_service_plan.id
+  always_on            = var.web_sku_name == "F1" || var.web_sku_name == "D1" || var.web_sku_name == "B1" ? false : true
   staging_slot_enabled = var.web_sku_name == "F1" || var.web_sku_name == "D1" || var.web_sku_name == "B1" ? false : true
   app_settings = {
     APPINSIGHTS_INSTRUMENTATIONKEY             = module.app_insights.instrumentation_key

@@ -1,0 +1,96 @@
+name: 'Terraform Infrastructure CI/CD'
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to toggle'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - test
+          - uat
+          - prod
+      action:
+        description: 'Terraform Action to perform'
+        required: true
+        default: 'plan'
+        type: choice
+        options:
+          - plan
+          - apply
+          - destroy
+
+# These permissions are required for Azure OIDC login
+permissions:
+  id-token: write 
+  contents: read
+
+env:
+  # Using OIDC for secure, credential-less Azure login
+  ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+  ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+  ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  ARM_USE_OIDC: true
+  TF_WORKING_DIR: "infra/environments/${{ github.event.inputs.environment }}"
+
+jobs:
+  terraform:
+    name: '${{ github.event.inputs.action }} - ${{ github.event.inputs.environment }}'
+    runs-on: ubuntu-latest
+    
+    # Use GitHub Environments for approvals during Prod/UAT deployments
+    environment: ${{ github.event.inputs.environment }}
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.5.7"
+
+      - name: Prepare Workspace Files
+        run: |
+          echo "Copying root tf configurations to the ${{ github.event.inputs.environment }} module folder..."
+          cp infra/provider.tf ${{ env.TF_WORKING_DIR }}/
+          cp infra/versions.tf ${{ env.TF_WORKING_DIR }}/
+          cp infra/backend.tf ${{ env.TF_WORKING_DIR }}/
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ env.ARM_CLIENT_ID }}
+          tenant-id: ${{ env.ARM_TENANT_ID }}
+          subscription-id: ${{ env.ARM_SUBSCRIPTION_ID }}
+
+      - name: Terraform Init
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        # Notice how we dynamically map the remote backend state based on the environment selected!
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=${{ secrets.TF_STATE_RG }}" \
+            -backend-config="storage_account_name=${{ secrets.TF_STATE_SA }}" \
+            -backend-config="container_name=tfstate" \
+            -backend-config="key=${{ github.event.inputs.environment }}.terraform.tfstate"
+
+      - name: Terraform Plan
+        if: github.event.inputs.action == 'plan'
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform plan -out=tfplan
+
+      - name: Terraform Apply
+        if: github.event.inputs.action == 'apply'
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        # We auto-approve here because the manual execution + environment approvals handle safety.
+        run: terraform apply -auto-approve
+
+      - name: Terraform Destroy
+        if: github.event.inputs.action == 'destroy'
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          echo "WARNING: Destroying ${{ github.event.inputs.environment }} environment."
+          terraform destroy -auto-approve

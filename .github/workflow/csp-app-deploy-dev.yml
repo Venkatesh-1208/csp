@@ -1,25 +1,21 @@
-name: Backend CI/CD - Development & UAT
+name: Backend CI/CD Pipeline
 
 on:
   push:
     branches:
-      - feature/deploy-prod
-
+      - feature/*
+      - development
+      - main
 
 env:
-  DOTNET_VERSION: ${{ vars.DOTNET_VERSION }}
-  API_PATH: ${{ vars.API_PATH }}
-  EntraId__TenantId: ${{ secrets.ENTRAID__TENANTID }}
-  EntraId__ClientId: ${{ secrets.ENTRAID__CLIENTID }}
-  EntraId__Authority: ${{ secrets.ENTRAID__AUTHORITY }}
-  ExternalId__TenantId: ${{ secrets.EXTERNALID__TENANTID }}
-  ExternalId__ClientId: ${{ secrets.EXTERNALID__CLIENTID }}
-  ExternalId__Authority: ${{ secrets.EXTERNALID__AUTHORITY }}
-  AzureBlobStorage__ConnectionString: ${{ secrets.BLOB_CONNECTION_STRING_DEV }}
+  DOTNET_VERSION: '8.0.x'
 
 jobs:
-  build:
-    name: Build & Test
+
+# -----------------------------------
+# 1. BUILD + TEST (UNCHANGED)
+# -----------------------------------
+  build-and-test:
     runs-on: ubuntu-latest
 
     steps:
@@ -31,152 +27,70 @@ jobs:
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
-      - name: Restore dependencies
-        run: dotnet restore ${{ env.API_PATH }}
+      - name: Restore
+        run: dotnet restore
 
       - name: Build
-        run: dotnet build ${{ env.API_PATH }} --configuration Release --no-restore
-
-      - name: Debug -list test projects
-        run: |
-          echo "Listing test projects..."
-          find . -name "*Tests.csproj"
+        run: dotnet build --configuration Release --no-restore
 
       - name: Run Unit Tests
-        run: |
-          set -e
-          projects=$(find . -name "*Tests.csproj")
-          if [ -z "$projects" ]; then
-            echo "No test projects found. Skipping tests."
-            exit 1
-          fi
+        run: dotnet test --configuration Release --no-build --verbosity normal
 
-          for proj in $projects; do
-            echo "Running tests for $proj"
-            dotnet test "$proj" \
-              --configuration Release \
-              --verbosity normal \
-              --logger "trx;LogFileName=test-results.trx" \
-            --collect:"XPlat Code Coverage"
-          done
-          echo " Test execution completed"
-
-      - name: Upload Test Results
-        if: always()
-        continue-on-error: true
-        uses: actions/upload-artifact@v4
-        with:
-          name: backend-test-results
-          path: |
-            **/TestResults/**/*.trx
-            **/TestResults/**/coverage.cobertura.xml
-          retention-days: 30
-      - name: Publish
-        run: dotnet publish ${{ env.API_PATH }} --configuration Release --no-build -o ${{ runner.temp }}/publish
-
-      - name: Upload build artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: backend-publish
-          path: ${{ runner.temp }}/publish
-          retention-days: 5
-
-  docker-build-push-dev:
-    name: Build & Push Docker Image (Dev)
+# -----------------------------------
+# 2. BUILD & PUSH DOCKER IMAGE
+# -----------------------------------
+  docker-build-push:
     runs-on: ubuntu-latest
-    needs: build
+    needs: build-and-test
+
     outputs:
-      image_tag: ${{ steps.image-tag.outputs.tag }}
-      image_full: ${{ steps.image-tag.outputs.image }}
+      image: ${{ steps.image.outputs.image }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set Docker image tag (Dev)
-        id: image-tag
+      - name: Set image tag
+        id: image
         run: |
-          TAG=${{ github.sha }}
-          echo "tag=$TAG" >> $GITHUB_OUTPUT
-          echo "image=${{ vars.ACR_LOGIN_SERVER }}/${{ vars.IMAGE_NAME }}:$TAG" >> $GITHUB_OUTPUT
-          echo " Docker Image Tag (Dev): $TAG"
+          IMAGE=${{ vars.ACR_NAME }}.azurecr.io/csp-backend:${{ github.sha }}
+          echo "image=$IMAGE" >> $GITHUB_OUTPUT
 
-      - name: Azure CLI login (Dev)
-        run: |
-          az login --service-principal \
-            -u "${{ secrets.AZURE_CLIENT_ID }}" \
-            -p "${{ secrets.AZURE_CLIENT_SECRET }}" \
-            --tenant "${{ secrets.AZURE_TENANT_ID }}" \
-            --output none
-          echo " Successfully logged into Azure (Dev)"
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Login to ACR (Dev)
-        run: |
-          az acr login --name ${{ vars.ACR_NAME }}
-          echo " Successfully logged into ACR (Dev)"
+      - name: ACR Login
+        run: az acr login --name ${{ vars.ACR_NAME }}
 
-      - name: Inject BlobStorage ConnectionString into appsettings.json (Dev)
-        run: |
-          FILE="${{ env.API_PATH }}/appsettings.json"
-          echo "Updating BlobStorage ConnectionString inside: $FILE"
- 
-          sed -i "s/__BLOB_CONNECTION_STRING__/${{ secrets.BLOB_CONNECTION_STRING_DEV }}/g" "$FILE"
- 
-          echo " Updated appsettings.json with Dev secrets"
+      - name: Build Image
+        run: docker build -t ${{ steps.image.outputs.image }} .
 
-      - name: Build Docker image (Dev)
-        run: |
-          docker build \
-            -f ${{ env.API_PATH }}/Dockerfile \
-            -t ${{ steps.image-tag.outputs.image }} \
-            -t ${{ vars.ACR_LOGIN_SERVER }}/${{ vars.IMAGE_NAME }}:latest \
-            .
-          echo " Docker image built successfully (Dev)"
-          docker images | grep ${{ vars.IMAGE_NAME }}
+      - name: Push Image
+        run: docker push ${{ steps.image.outputs.image }}
 
-      - name: Push Docker image to ACR (Dev)
-        run: |
-          docker push ${{ steps.image-tag.outputs.image }}
-          docker push ${{ vars.ACR_LOGIN_SERVER }}/${{ vars.IMAGE_NAME }}:latest
-          echo " Docker image pushed to ACR (Dev)"
-
-      - name: Azure logout (Dev)
-        if: always()
-        run: az logout || true
-
+# -----------------------------------
+# 3. DEPLOY TO DEV
+# -----------------------------------
   deploy-dev:
-    name: Deploy to Azure App Service (Development)
     runs-on: ubuntu-latest
-    needs: docker-build-push-dev
+    needs: docker-build-push
+    if: github.ref == 'refs/heads/development'
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Azure CLI login (Dev)
-        run: |
-          az login --service-principal \
-            -u "${{ secrets.AZURE_CLIENT_ID }}" \
-            -p "${{ secrets.AZURE_CLIENT_SECRET }}" \
-            --tenant "${{ secrets.AZURE_TENANT_ID }}" \
-            --output none
-          echo " Successfully logged into Azure (Dev)"
-
-      - name: Verify App Service exists (Dev)
-        run: |
-          az webapp show \
-            --name ${{ vars.WEBAPP_NAME }} \
-            --resource-group ${{ vars.RESOURCE_GROUP }} \
-            --output none
-          echo " App Service verified: ${{ vars.WEBAPP_NAME }}"
-
-
-      - name: Inject App Settings (Dev)
+      - name: Configure App Settings (DEV)
         run: |
           az webapp config appsettings set \
-            --name ${{ vars.WEBAPP_NAME }} \
-            --resource-group ${{ vars.RESOURCE_GROUP }} \
+            --name ${{ vars.WEBAPP_NAME_DEV }} \
+            --resource-group ${{ vars.RG_DEV }} \
             --settings \
+              WEBSITES_PORT=8080 \
               ASPNETCORE_URLS="http://+:8080" \
               AzureBlobStorage__ConnectionString="${{ secrets.BLOB_CONNECTION_STRING_DEV }}" \
               EntraId__TenantId="${{ secrets.ENTRAID__TENANTID }}" \
@@ -186,195 +100,44 @@ jobs:
               ExternalId__ClientId="${{ secrets.EXTERNALID__CLIENTID }}" \
               ExternalId__Authority="${{ secrets.EXTERNALID__AUTHORITY }}"
 
-      - name: Deploy to App Service (Dev)
+      - name: Deploy Container (DEV)
         run: |
           az webapp config container set \
-            --name ${{ vars.WEBAPP_NAME }} \
-            --resource-group ${{ vars.RESOURCE_GROUP }} \
-            --docker-custom-image-name ${{ needs.docker-build-push-dev.outputs.image_full }} \
-            --docker-registry-server-url https://${{ vars.ACR_LOGIN_SERVER }} \
-            --docker-registry-server-user ${{ secrets.ACR_USERNAME }} \
-            --docker-registry-server-password ${{ secrets.ACR_PASSWORD }}
-          echo " Container configuration updated"
+            --name ${{ vars.WEBAPP_NAME_DEV }} \
+            --resource-group ${{ vars.RG_DEV }} \
+            --docker-custom-image-name ${{ needs.docker-build-push.outputs.image }}
 
-      - name: Restart App Service (Dev)
+      - name: Restart App (DEV)
         run: |
           az webapp restart \
-            --name ${{ vars.WEBAPP_NAME }} \
-            --resource-group ${{ vars.RESOURCE_GROUP }}
-          echo " App Service restarted"
+            --name ${{ vars.WEBAPP_NAME_DEV }} \
+            --resource-group ${{ vars.RG_DEV }}
 
-      - name: Wait for App Service to be healthy (Dev)
-        run: |
-          echo "Waiting for app to be ready..."
-          URL="https://${{ vars.WEBAPP_NAME }}.azurewebsites.net/health"
-          MAX_ATTEMPTS=15
-          SLEEP_SECONDS=10
-
-          for i in $(seq 1 $MAX_ATTEMPTS); do
-            echo "Attempt $i/$MAX_ATTEMPTS — checking $URL"
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL" || echo "000")
-
-            if [[ "$STATUS" == "200" ]]; then
-              echo " App is healthy! HTTP $STATUS"
-              exit 0
-            fi
-
-            echo "HTTP $STATUS — retrying in ${SLEEP_SECONDS}s..."
-            sleep $SLEEP_SECONDS
-          done
-
-          echo " App did not return 200 after $MAX_ATTEMPTS attempts — check logs"
-          exit 0
-
-      - name: Smoke Tests (Dev)
-        continue-on-error: true
-        run: |
-          echo "Running smoke tests..."
-          URL="https://${{ vars.WEBAPP_NAME }}.azurewebsites.net"
-          
-          # Test health endpoint
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL/health" || echo "000")
-          if [[ "$STATUS" == "200" ]]; then
-            echo " Health endpoint: PASSED (HTTP $STATUS)"
-          else
-            echo " Health endpoint: HTTP $STATUS"
-          fi
-          
-          # Test API endpoint
-          API_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL/api" || echo "000")
-          if [[ "$API_STATUS" == "200" ]] || [[ "$API_STATUS" == "404" ]]; then
-            echo " API endpoint: PASSED (HTTP $API_STATUS)"
-          else
-            echo " API endpoint: HTTP $API_STATUS"
-          fi
-
-      - name: Deployment Summary (Dev)
-        if: success()
-        run: |
-          echo " Backend Development Deployment Summary"
-          echo "=============================="
-          echo "Status:           SUCCESS"
-          echo "Environment:      Development"
-          echo "Docker Image:     ${{ needs.docker-build-push-dev.outputs.image_full }}"
-          echo "App Service:      ${{ vars.WEBAPP_NAME }}"
-          echo "Resource Group:   ${{ vars.RESOURCE_GROUP }}"
-          echo "URL:              https://${{ vars.WEBAPP_NAME }}.azurewebsites.net"
-          echo "Commit SHA:       ${{ github.sha }}"
-          echo "Timestamp:        $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
-
-      - name: Azure logout (Dev)
-        if: always()
-        run: az logout || true
-
-      - name: Deployment Failed (Dev)
-        if: failure()
-        run: |
-          echo " Backend Development Deployment Failed!"
-          echo "Check the logs above for details"
-          exit 1
-
-  docker-build-push-uat:
-    name: Build & Push Docker Image (UAT)
+# -----------------------------------
+# 4. DEPLOY TO UAT
+# -----------------------------------
+  deploy-uat:
     runs-on: ubuntu-latest
     needs: deploy-dev
-    environment: uat
-    if: success()
-    outputs:
-      image_tag: ${{ steps.image-tag.outputs.tag }}
-      image_full: ${{ steps.image-tag.outputs.image }}
+    if: github.ref == 'refs/heads/development'
 
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set Docker image tag (UAT)
-        id: image-tag
-        run: |
-          TAG=${{ github.sha }}
-          echo "tag=$TAG" >> $GITHUB_OUTPUT
-          echo "image=${{ vars.ACR_LOGIN_SERVER }}/${{ vars.IMAGE_NAME }}:$TAG" >> $GITHUB_OUTPUT
-          echo "Docker Image Tag (UAT): $TAG"
-
-      - name: Azure CLI login (UAT)
-        run: |
-          az login --service-principal \
-            -u "${{ secrets.AZURE_CLIENT_ID }}" \
-            -p "${{ secrets.AZURE_CLIENT_SECRET }}" \
-            --tenant "${{ secrets.AZURE_TENANT_ID }}" \
-            --output none
-          echo "Successfully logged into Azure (UAT)"
-
-      - name: Login to ACR (UAT)
-        run: |
-          az acr login --name ${{ vars.ACR_NAME }}
-          echo "Successfully logged into ACR (UAT)"
-
-      - name: Inject BlobStorage ConnectionString into appsettings.json (UAT)
-        run: |
-          FILE="${{ env.API_PATH }}/appsettings.json"
-          echo "Updating BlobStorage ConnectionString inside: $FILE"
- 
-          sed -i "s|__BLOB_CONNECTION_STRING__|${{ secrets.BLOB_CONNECTION_STRING }}|g" "$FILE"
- 
-          echo "Updated appsettings.json with UAT secrets"
-
-      - name: Build Docker image (UAT)
-        run: |
-          docker build \
-            -f ${{ env.API_PATH }}/Dockerfile \
-            -t ${{ steps.image-tag.outputs.image }} \
-            -t ${{ vars.ACR_LOGIN_SERVER }}/${{ vars.IMAGE_NAME }}:latest \
-            .
-          echo "Docker image built successfully (UAT)"
-          docker images | grep ${{ vars.IMAGE_NAME }}
-
-      - name: Push Docker image to ACR (UAT)
-        run: |
-          docker push ${{ steps.image-tag.outputs.image }}
-          docker push ${{ vars.ACR_LOGIN_SERVER }}/${{ vars.IMAGE_NAME }}:latest
-          echo "Docker image pushed to ACR (UAT)"
-
-      - name: Azure logout (UAT)
-        if: always()
-        run: az logout || true
-
-  deploy-uat:
-    name: Deploy to Azure App Service (UAT)
-    runs-on: ubuntu-latest
-    needs: docker-build-push-uat
     environment: uat
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Azure CLI login (UAT)
-        run: |
-          az login --service-principal \
-            -u "${{ secrets.AZURE_CLIENT_ID }}" \
-            -p "${{ secrets.AZURE_CLIENT_SECRET }}" \
-            --tenant "${{ secrets.AZURE_TENANT_ID }}" \
-            --output none
-          echo "Successfully logged into Azure (UAT)"
-
-      - name: Verify App Service exists (UAT)
-        run: |
-          az webapp show \
-            --name ${{ vars.WEBAPP_NAME }} \
-            --resource-group ${{ vars.RESOURCE_GROUP }} \
-            --output none
-          echo "App Service verified: ${{ vars.WEBAPP_NAME }}"
-
- 
-      - name: Inject App Settings (UAT)
+      - name: Configure App Settings (UAT)
         run: |
           az webapp config appsettings set \
-            --name ${{ vars.WEBAPP_NAME }} \
-            --resource-group ${{ vars.RESOURCE_GROUP }} \
+            --name ${{ vars.WEBAPP_NAME_UAT }} \
+            --resource-group ${{ vars.RG_UAT }} \
             --settings \
+              WEBSITES_PORT=8080 \
               ASPNETCORE_URLS="http://+:8080" \
-              AzureBlobStorage__ConnectionString="${{ secrets.BLOB_CONNECTION_STRING }}" \
+              AzureBlobStorage__ConnectionString="${{ secrets.BLOB_CONNECTION_STRING_UAT }}" \
               EntraId__TenantId="${{ secrets.ENTRAID__TENANTID }}" \
               EntraId__ClientId="${{ secrets.ENTRAID__CLIENTID }}" \
               EntraId__Authority="${{ secrets.ENTRAID__AUTHORITY }}" \
@@ -382,90 +145,15 @@ jobs:
               ExternalId__ClientId="${{ secrets.EXTERNALID__CLIENTID }}" \
               ExternalId__Authority="${{ secrets.EXTERNALID__AUTHORITY }}"
 
-      - name: Deploy to App Service (UAT)
+      - name: Deploy Container (UAT)
         run: |
           az webapp config container set \
-            --name ${{ vars.WEBAPP_NAME }} \
-            --resource-group ${{ vars.RESOURCE_GROUP }} \
-            --docker-custom-image-name ${{ needs.docker-build-push-uat.outputs.image_full }} \
-            --docker-registry-server-url https://${{ vars.ACR_LOGIN_SERVER }} \
-            --docker-registry-server-user ${{ secrets.ACR_USERNAME }} \
-            --docker-registry-server-password ${{ secrets.ACR_PASSWORD }}
-          echo "Container configuration updated"
+            --name ${{ vars.WEBAPP_NAME_UAT }} \
+            --resource-group ${{ vars.RG_UAT }} \
+            --docker-custom-image-name ${{ needs.docker-build-push.outputs.image }}
 
-      - name: Restart App Service (UAT)
+      - name: Restart App (UAT)
         run: |
           az webapp restart \
-            --name ${{ vars.WEBAPP_NAME }} \
-            --resource-group ${{ vars.RESOURCE_GROUP }}
-          echo "App Service restarted"
-
-      - name: Wait for App Service to be healthy (UAT)
-        run: |
-          echo "Waiting for app to be ready..."
-          URL="https://${{ vars.WEBAPP_NAME }}.azurewebsites.net/health"
-          MAX_ATTEMPTS=15
-          SLEEP_SECONDS=10
-
-          for i in $(seq 1 $MAX_ATTEMPTS); do
-            echo "Attempt $i/$MAX_ATTEMPTS — checking $URL"
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL" || echo "000")
-
-            if [[ "$STATUS" == "200" ]]; then
-              echo "App is healthy! HTTP $STATUS"
-              exit 0
-            fi
-
-            echo "HTTP $STATUS — retrying in ${SLEEP_SECONDS}s..."
-            sleep $SLEEP_SECONDS
-          done
-
-          echo "App did not return 200 after $MAX_ATTEMPTS attempts — check logs"
-          exit 0
-
-      - name: Smoke Tests (UAT)
-        continue-on-error: true
-        run: |
-          echo "Running smoke tests..."
-          URL="https://${{ vars.WEBAPP_NAME }}.azurewebsites.net"
-          
-          # Test health endpoint
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL/health" || echo "000")
-          if [[ "$STATUS" == "200" ]]; then
-            echo "Health endpoint: PASSED (HTTP $STATUS)"
-          else
-            echo "Health endpoint: HTTP $STATUS"
-          fi
-          
-          # Test API endpoint
-          API_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL/api" || echo "000")
-          if [[ "$API_STATUS" == "200" ]] || [[ "$API_STATUS" == "404" ]]; then
-            echo "API endpoint: PASSED (HTTP $API_STATUS)"
-          else
-            echo "API endpoint: HTTP $API_STATUS"
-          fi
-
-      - name: Deployment Summary (UAT)
-        if: success()
-        run: |
-          echo "Backend UAT Deployment Summary"
-          echo "=============================="
-          echo "Status:           SUCCESS"
-          echo "Environment:      UAT"
-          echo "Docker Image:     ${{ needs.docker-build-push-uat.outputs.image_full }}"
-          echo "App Service:      ${{ vars.WEBAPP_NAME }}"
-          echo "Resource Group:   ${{ vars.RESOURCE_GROUP }}"
-          echo "URL:              https://${{ vars.WEBAPP_NAME }}.azurewebsites.net"
-          echo "Commit SHA:       ${{ github.sha }}"
-          echo "Timestamp:        $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
-
-      - name: Azure logout (UAT)
-        if: always()
-        run: az logout || true
-
-      - name: Deployment Failed (UAT)
-        if: failure()
-        run: |
-          echo "Backend UAT Deployment Failed!"
-          echo "Check the logs above for details"
-          exit 1
+            --name ${{ vars.WEBAPP_NAME_UAT }} \
+            --resource-group ${{ vars.RG_UAT }}

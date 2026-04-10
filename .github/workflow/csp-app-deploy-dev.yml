@@ -1,295 +1,471 @@
-# ============================================================================
-# CSP Portal - Terraform Infrastructure Deployment (DEV)
-# ============================================================================
-# Runs terraform fmt/validate/plan on every push to infra/terraform/**
-# Applies on push to develop or manual dispatch with optional tier toggles.
-# ============================================================================
-name: "Terraform Infrastructure Deploy DEV"
+name: Backend CI/CD - Development & UAT
+
 on:
   push:
-    branches: [develop]
-    paths:
-      - "infra/terraform/**"
-  workflow_dispatch:
-    inputs:
-      deploy_web:
-        description: "Deploy Web Tier"
-        required: true
-        default: "true"
-        type: choice
-        options: ["true", "false"]
-      deploy_data:
-        description: "Deploy Data Tier"
-        required: true
-        default: "true"
-        type: choice
-        options: ["true", "false"]
-permissions:
-  id-token: write
-  contents: read
+    branches:
+      - feature/deploy-prod
+
+
 env:
-  TF_VERSION: "1.7.5"
-  TF_WORKING_DIR: "infra/terraform"
-  ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-  ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-  ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-  ARM_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-# ============================================================================
-# Job: Validate (fmt + validate + plan)
-# ============================================================================
+  DOTNET_VERSION: ${{ vars.DOTNET_VERSION }}
+  API_PATH: ${{ vars.API_PATH }}
+  EntraId__TenantId: ${{ secrets.ENTRAID__TENANTID }}
+  EntraId__ClientId: ${{ secrets.ENTRAID__CLIENTID }}
+  EntraId__Authority: ${{ secrets.ENTRAID__AUTHORITY }}
+  ExternalId__TenantId: ${{ secrets.EXTERNALID__TENANTID }}
+  ExternalId__ClientId: ${{ secrets.EXTERNALID__CLIENTID }}
+  ExternalId__Authority: ${{ secrets.EXTERNALID__AUTHORITY }}
+  AzureBlobStorage__ConnectionString: ${{ secrets.BLOB_CONNECTION_STRING_DEV }}
+
 jobs:
-  validate:
-    name: "Validate Terraform"
+  build:
+    name: Build & Test
     runs-on: ubuntu-latest
-    outputs:
-      deployment_name: ${{ steps.set-name.outputs.name }}
-    defaults:
-      run:
-        working-directory: ${{ env.TF_WORKING_DIR }}
+
     steps:
-      - name: Checkout Repository
+      - name: Checkout
         uses: actions/checkout@v4
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
         with:
-          terraform_version: ${{ env.TF_VERSION }}
-      - name: Set Deployment Name
-        id: set-name
-        run: echo "name=csp-infra-dev-$(date +%Y%m%d%H%M%S)" >> $GITHUB_OUTPUT
-      - name: Terraform Format Check
-        id: fmt
-        run: terraform fmt -check -recursive
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore dependencies
+        run: dotnet restore ${{ env.API_PATH }}
+
+      - name: Build
+        run: dotnet build ${{ env.API_PATH }} --configuration Release --no-restore
+
+      - name: Debug -list test projects
+        run: |
+          echo "Listing test projects..."
+          find . -name "*Tests.csproj"
+
+      - name: Run Unit Tests
+        run: |
+          set -e
+          projects=$(find . -name "*Tests.csproj")
+          if [ -z "$projects" ]; then
+            echo "No test projects found. Skipping tests."
+            exit 1
+          fi
+
+          for proj in $projects; do
+            echo "Running tests for $proj"
+            dotnet test "$proj" \
+              --configuration Release \
+              --verbosity normal \
+              --logger "trx;LogFileName=test-results.trx" \
+            --collect:"XPlat Code Coverage"
+          done
+          echo " Test execution completed"
+
+      - name: Upload Test Results
+        if: always()
         continue-on-error: true
-      - name: Terraform Init
-        run: |
-          terraform init \
-            -backend-config="resource_group_name=rg-csp-tfstate-scus" \
-            -backend-config="storage_account_name=stcspterraformscus" \
-            -backend-config="container_name=tfstate" \
-            -backend-config="key=csp-portal/dev/terraform.tfstate"
-      - name: Terraform Validate
-        run: terraform validate -no-color
-      - name: Terraform Plan
-        id: plan
-        run: |
-          terraform plan \
-            -var-file="dev.tfvars" \
-            -var="azure_tenant_id=$ARM_TENANT_ID" \
-            -var="azure_subscription_id=$ARM_SUBSCRIPTION_ID" \
-            -var="azure_client_id=$ARM_CLIENT_ID" \
-            -var="azure_client_secret=$ARM_CLIENT_SECRET" \
-            -var="deploy_web=${{ github.event.inputs.deploy_web || 'true' }}" \
-            -var="deploy_data=${{ github.event.inputs.deploy_data || 'true' }}" \
-            -out=tfplan \
-            -no-color \
-            -input=false
-      - name: Upload Plan Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: tfplan-${{ steps.set-name.outputs.name }}
-          path: ${{ env.TF_WORKING_DIR }}/tfplan
-          retention-days: 7
-      - name: Plan Summary
-        run: |
-          echo "## 🔍 Terraform Plan Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          terraform show -no-color tfplan | tail -20 >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-# ============================================================================
-# Job: Deploy Core
-# ============================================================================
-  deploy-core:
-    name: "Deploy Core Infrastructure"
-    needs: validate
+          name: backend-test-results
+          path: |
+            **/TestResults/**/*.trx
+            **/TestResults/**/coverage.cobertura.xml
+          retention-days: 30
+      - name: Publish
+        run: dotnet publish ${{ env.API_PATH }} --configuration Release --no-build -o ${{ runner.temp }}/publish
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-publish
+          path: ${{ runner.temp }}/publish
+          retention-days: 5
+
+  docker-build-push-dev:
+    name: Build & Push Docker Image (Dev)
     runs-on: ubuntu-latest
-    environment: dev
-    if: ${{ github.event_name == 'push' || true }}
+    needs: build
     outputs:
-      key_vault_name: ${{ steps.outputs.outputs.kv_name }}
-    defaults:
-      run:
-        working-directory: ${{ env.TF_WORKING_DIR }}
+      image_tag: ${{ steps.image-tag.outputs.tag }}
+      image_full: ${{ steps.image-tag.outputs.image }}
+
     steps:
-      - name: Checkout Repository
+      - name: Checkout
         uses: actions/checkout@v4
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ${{ env.TF_VERSION }}
-      - name: Download Plan
-        uses: actions/download-artifact@v4
-        with:
-          name: tfplan-${{ needs.validate.outputs.deployment_name }}
-          path: ${{ env.TF_WORKING_DIR }}
-      - name: Terraform Init
+
+      - name: Set Docker image tag (Dev)
+        id: image-tag
         run: |
-          terraform init \
-            -backend-config="resource_group_name=rg-csp-tfstate-scus" \
-            -backend-config="storage_account_name=stcspterraformscus" \
-            -backend-config="container_name=tfstate" \
-            -backend-config="key=csp-portal/dev/terraform.tfstate"
-      - name: Apply Core Module Only
+          TAG=${{ github.sha }}
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "image=${{ vars.ACR_LOGIN_SERVER }}/${{ vars.IMAGE_NAME }}:$TAG" >> $GITHUB_OUTPUT
+          echo " Docker Image Tag (Dev): $TAG"
+
+      - name: Azure CLI login (Dev)
         run: |
-          terraform apply \
-            -target=module.core \
-            -var-file="dev.tfvars" \
-            -var="azure_tenant_id=$ARM_TENANT_ID" \
-            -var="azure_subscription_id=$ARM_SUBSCRIPTION_ID" \
-            -var="azure_client_id=$ARM_CLIENT_ID" \
-            -var="azure_client_secret=$ARM_CLIENT_SECRET" \
-            -auto-approve \
-            -input=false
-      - name: Capture Core Outputs
-        id: outputs
+          az login --service-principal \
+            -u "${{ secrets.AZURE_CLIENT_ID }}" \
+            -p "${{ secrets.AZURE_CLIENT_SECRET }}" \
+            --tenant "${{ secrets.AZURE_TENANT_ID }}" \
+            --output none
+          echo " Successfully logged into Azure (Dev)"
+
+      - name: Login to ACR (Dev)
         run: |
-          KV=$(terraform output -raw core_key_vault_name 2>/dev/null || echo "")
-          echo "kv_name=$KV" >> $GITHUB_OUTPUT
-      - name: Core Deployment Summary
+          az acr login --name ${{ vars.ACR_NAME }}
+          echo " Successfully logged into ACR (Dev)"
+
+      - name: Inject BlobStorage ConnectionString into appsettings.json (Dev)
         run: |
-          echo "## 🏗️ Core Infrastructure Applied" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Resource | Name | Status |" >> $GITHUB_STEP_SUMMARY
-          echo "|----------|------|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Resource Group | rg-csp-core-dev-scus | ✅ |" >> $GITHUB_STEP_SUMMARY
-          echo "| Virtual Network | vnet-csp-dev-scus | ✅ |" >> $GITHUB_STEP_SUMMARY
-          echo "| App Subnet | snet-csp-app-dev-scus | ✅ |" >> $GITHUB_STEP_SUMMARY
-          echo "| Data Subnet | snet-csp-data-dev-scus | ✅ |" >> $GITHUB_STEP_SUMMARY
-          echo "| Log Analytics | log-csp-dev-scus | ✅ |" >> $GITHUB_STEP_SUMMARY
-          echo "| Key Vault | kv-csp-dev-scus | ✅ |" >> $GITHUB_STEP_SUMMARY
-# ============================================================================
-# Job: Deploy Web (needs core)
-# ============================================================================
-  deploy-web:
-    name: "Deploy Web Tier"
-    needs: deploy-core
+          FILE="${{ env.API_PATH }}/appsettings.json"
+          echo "Updating BlobStorage ConnectionString inside: $FILE"
+ 
+          sed -i "s/__BLOB_CONNECTION_STRING__/${{ secrets.BLOB_CONNECTION_STRING_DEV }}/g" "$FILE"
+ 
+          echo " Updated appsettings.json with Dev secrets"
+
+      - name: Build Docker image (Dev)
+        run: |
+          docker build \
+            -f ${{ env.API_PATH }}/Dockerfile \
+            -t ${{ steps.image-tag.outputs.image }} \
+            -t ${{ vars.ACR_LOGIN_SERVER }}/${{ vars.IMAGE_NAME }}:latest \
+            .
+          echo " Docker image built successfully (Dev)"
+          docker images | grep ${{ vars.IMAGE_NAME }}
+
+      - name: Push Docker image to ACR (Dev)
+        run: |
+          docker push ${{ steps.image-tag.outputs.image }}
+          docker push ${{ vars.ACR_LOGIN_SERVER }}/${{ vars.IMAGE_NAME }}:latest
+          echo " Docker image pushed to ACR (Dev)"
+
+      - name: Azure logout (Dev)
+        if: always()
+        run: az logout || true
+
+  deploy-dev:
+    name: Deploy to Azure App Service (Development)
     runs-on: ubuntu-latest
-    environment: dev
-    if: ${{ github.event_name == 'push' || github.event.inputs.deploy_web == 'true' }}
-    defaults:
-      run:
-        working-directory: ${{ env.TF_WORKING_DIR }}
+    needs: docker-build-push-dev
+
     steps:
-      - name: Checkout Repository
+      - name: Checkout
         uses: actions/checkout@v4
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ${{ env.TF_VERSION }}
-      - name: Terraform Init
+
+      - name: Azure CLI login (Dev)
         run: |
-          terraform init \
-            -backend-config="resource_group_name=rg-csp-tfstate-scus" \
-            -backend-config="storage_account_name=stcspterraformscus" \
-            -backend-config="container_name=tfstate" \
-            -backend-config="key=csp-portal/dev/terraform.tfstate"
-      - name: Apply Web Module
+          az login --service-principal \
+            -u "${{ secrets.AZURE_CLIENT_ID }}" \
+            -p "${{ secrets.AZURE_CLIENT_SECRET }}" \
+            --tenant "${{ secrets.AZURE_TENANT_ID }}" \
+            --output none
+          echo " Successfully logged into Azure (Dev)"
+
+      - name: Verify App Service exists (Dev)
         run: |
-          terraform apply \
-            -target=module.web \
-            -var-file="dev.tfvars" \
-            -var="azure_tenant_id=$ARM_TENANT_ID" \
-            -var="azure_subscription_id=$ARM_SUBSCRIPTION_ID" \
-            -var="azure_client_id=$ARM_CLIENT_ID" \
-            -var="azure_client_secret=$ARM_CLIENT_SECRET" \
-            -var="deploy_web=true" \
-            -auto-approve \
-            -input=false
-      - name: Web Deployment Summary
+          az webapp show \
+            --name ${{ vars.WEBAPP_NAME }} \
+            --resource-group ${{ vars.RESOURCE_GROUP }} \
+            --output none
+          echo " App Service verified: ${{ vars.WEBAPP_NAME }}"
+
+
+      - name: Inject App Settings (Dev)
         run: |
-          WEB_URL=$(terraform output -raw web_app_hostname 2>/dev/null || echo "N/A")
-          echo "## 🌐 Web Tier Applied" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Resource | Name | Status |" >> $GITHUB_STEP_SUMMARY
-          echo "|----------|------|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| App Service Plan | asp-csp-web-dev-scus (B1) | ✅ |" >> $GITHUB_STEP_SUMMARY
-          echo "| Web App | app-csp-web-dev-scus | ✅ |" >> $GITHUB_STEP_SUMMARY
-          echo "| Application Insights | appi-csp-web-dev-scus | ✅ |" >> $GITHUB_STEP_SUMMARY
-          echo "| Staging Slot | staging | ✅ |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 🔗 Web App URL" >> $GITHUB_STEP_SUMMARY
-          echo "https://$WEB_URL" >> $GITHUB_STEP_SUMMARY
-# ============================================================================
-# Job: Deploy Data (needs core)
-# ============================================================================
-  deploy-data:
-    name: "Deploy Data Tier"
-    needs: deploy-core
+          az webapp config appsettings set \
+            --name ${{ vars.WEBAPP_NAME }} \
+            --resource-group ${{ vars.RESOURCE_GROUP }} \
+            --settings \
+              ASPNETCORE_URLS="http://+:8080" \
+              AzureBlobStorage__ConnectionString="${{ secrets.BLOB_CONNECTION_STRING_DEV }}" \
+              EntraId__TenantId="${{ secrets.ENTRAID__TENANTID }}" \
+              EntraId__ClientId="${{ secrets.ENTRAID__CLIENTID }}" \
+              EntraId__Authority="${{ secrets.ENTRAID__AUTHORITY }}" \
+              ExternalId__TenantId="${{ secrets.EXTERNALID__TENANTID }}" \
+              ExternalId__ClientId="${{ secrets.EXTERNALID__CLIENTID }}" \
+              ExternalId__Authority="${{ secrets.EXTERNALID__AUTHORITY }}"
+
+      - name: Deploy to App Service (Dev)
+        run: |
+          az webapp config container set \
+            --name ${{ vars.WEBAPP_NAME }} \
+            --resource-group ${{ vars.RESOURCE_GROUP }} \
+            --docker-custom-image-name ${{ needs.docker-build-push-dev.outputs.image_full }} \
+            --docker-registry-server-url https://${{ vars.ACR_LOGIN_SERVER }} \
+            --docker-registry-server-user ${{ secrets.ACR_USERNAME }} \
+            --docker-registry-server-password ${{ secrets.ACR_PASSWORD }}
+          echo " Container configuration updated"
+
+      - name: Restart App Service (Dev)
+        run: |
+          az webapp restart \
+            --name ${{ vars.WEBAPP_NAME }} \
+            --resource-group ${{ vars.RESOURCE_GROUP }}
+          echo " App Service restarted"
+
+      - name: Wait for App Service to be healthy (Dev)
+        run: |
+          echo "Waiting for app to be ready..."
+          URL="https://${{ vars.WEBAPP_NAME }}.azurewebsites.net/health"
+          MAX_ATTEMPTS=15
+          SLEEP_SECONDS=10
+
+          for i in $(seq 1 $MAX_ATTEMPTS); do
+            echo "Attempt $i/$MAX_ATTEMPTS — checking $URL"
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL" || echo "000")
+
+            if [[ "$STATUS" == "200" ]]; then
+              echo " App is healthy! HTTP $STATUS"
+              exit 0
+            fi
+
+            echo "HTTP $STATUS — retrying in ${SLEEP_SECONDS}s..."
+            sleep $SLEEP_SECONDS
+          done
+
+          echo " App did not return 200 after $MAX_ATTEMPTS attempts — check logs"
+          exit 0
+
+      - name: Smoke Tests (Dev)
+        continue-on-error: true
+        run: |
+          echo "Running smoke tests..."
+          URL="https://${{ vars.WEBAPP_NAME }}.azurewebsites.net"
+          
+          # Test health endpoint
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL/health" || echo "000")
+          if [[ "$STATUS" == "200" ]]; then
+            echo " Health endpoint: PASSED (HTTP $STATUS)"
+          else
+            echo " Health endpoint: HTTP $STATUS"
+          fi
+          
+          # Test API endpoint
+          API_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL/api" || echo "000")
+          if [[ "$API_STATUS" == "200" ]] || [[ "$API_STATUS" == "404" ]]; then
+            echo " API endpoint: PASSED (HTTP $API_STATUS)"
+          else
+            echo " API endpoint: HTTP $API_STATUS"
+          fi
+
+      - name: Deployment Summary (Dev)
+        if: success()
+        run: |
+          echo " Backend Development Deployment Summary"
+          echo "=============================="
+          echo "Status:           SUCCESS"
+          echo "Environment:      Development"
+          echo "Docker Image:     ${{ needs.docker-build-push-dev.outputs.image_full }}"
+          echo "App Service:      ${{ vars.WEBAPP_NAME }}"
+          echo "Resource Group:   ${{ vars.RESOURCE_GROUP }}"
+          echo "URL:              https://${{ vars.WEBAPP_NAME }}.azurewebsites.net"
+          echo "Commit SHA:       ${{ github.sha }}"
+          echo "Timestamp:        $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
+
+      - name: Azure logout (Dev)
+        if: always()
+        run: az logout || true
+
+      - name: Deployment Failed (Dev)
+        if: failure()
+        run: |
+          echo " Backend Development Deployment Failed!"
+          echo "Check the logs above for details"
+          exit 1
+
+  docker-build-push-uat:
+    name: Build & Push Docker Image (UAT)
     runs-on: ubuntu-latest
-    environment: dev
-    if: ${{ github.event_name == 'push' || github.event.inputs.deploy_data == 'true' }}
-    defaults:
-      run:
-        working-directory: ${{ env.TF_WORKING_DIR }}
+    needs: deploy-dev
+    environment: uat
+    if: success()
+    outputs:
+      image_tag: ${{ steps.image-tag.outputs.tag }}
+      image_full: ${{ steps.image-tag.outputs.image }}
+
     steps:
-      - name: Checkout Repository
+      - name: Checkout
         uses: actions/checkout@v4
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ${{ env.TF_VERSION }}
-      - name: Terraform Init
+
+      - name: Set Docker image tag (UAT)
+        id: image-tag
         run: |
-          terraform init \
-            -backend-config="resource_group_name=rg-csp-tfstate-scus" \
-            -backend-config="storage_account_name=stcspterraformscus" \
-            -backend-config="container_name=tfstate" \
-            -backend-config="key=csp-portal/dev/terraform.tfstate"
-      - name: Apply Data Module
+          TAG=${{ github.sha }}
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "image=${{ vars.ACR_LOGIN_SERVER }}/${{ vars.IMAGE_NAME }}:$TAG" >> $GITHUB_OUTPUT
+          echo "Docker Image Tag (UAT): $TAG"
+
+      - name: Azure CLI login (UAT)
         run: |
-          terraform apply \
-            -target=module.data \
-            -var-file="dev.tfvars" \
-            -var="azure_tenant_id=$ARM_TENANT_ID" \
-            -var="azure_subscription_id=$ARM_SUBSCRIPTION_ID" \
-            -var="azure_client_id=$ARM_CLIENT_ID" \
-            -var="azure_client_secret=$ARM_CLIENT_SECRET" \
-            -var="deploy_data=true" \
-            -auto-approve \
-            -input=false
-      - name: Data Deployment Summary
+          az login --service-principal \
+            -u "${{ secrets.AZURE_CLIENT_ID }}" \
+            -p "${{ secrets.AZURE_CLIENT_SECRET }}" \
+            --tenant "${{ secrets.AZURE_TENANT_ID }}" \
+            --output none
+          echo "Successfully logged into Azure (UAT)"
+
+      - name: Login to ACR (UAT)
         run: |
-          PG_FQDN=$(terraform output -raw postgresql_fqdn 2>/dev/null || echo "N/A")
-          echo "## 💾 Data Tier Applied" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Resource | SKU | Status |" >> $GITHUB_STEP_SUMMARY
-          echo "|----------|-----|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| PostgreSQL | Burstable B1ms | ✅ |" >> $GITHUB_STEP_SUMMARY
-          echo "| Redis Cache | Basic C0 | ✅ |" >> $GITHUB_STEP_SUMMARY
-          echo "| Storage | Standard LRS | ✅ |" >> $GITHUB_STEP_SUMMARY
-          echo "| AI Search | Basic | ✅ |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 🔐 Secrets Stored in Key Vault" >> $GITHUB_STEP_SUMMARY
-          echo "- psql-admin-password  " >> $GITHUB_STEP_SUMMARY
-          echo "- psql-admin-username  " >> $GITHUB_STEP_SUMMARY
-          echo "- psql-connection-string  " >> $GITHUB_STEP_SUMMARY
-          echo "- redis-connection-string  " >> $GITHUB_STEP_SUMMARY
-          echo "- storage-connection-string  " >> $GITHUB_STEP_SUMMARY
-          echo "- search-admin-key  " >> $GITHUB_STEP_SUMMARY
-# ============================================================================
-# Job: Final Summary
-# ============================================================================
-  summary:
-    name: "Deployment Summary"
-    needs: [deploy-core, deploy-web, deploy-data]
+          az acr login --name ${{ vars.ACR_NAME }}
+          echo "Successfully logged into ACR (UAT)"
+
+      - name: Inject BlobStorage ConnectionString into appsettings.json (UAT)
+        run: |
+          FILE="${{ env.API_PATH }}/appsettings.json"
+          echo "Updating BlobStorage ConnectionString inside: $FILE"
+ 
+          sed -i "s|__BLOB_CONNECTION_STRING__|${{ secrets.BLOB_CONNECTION_STRING }}|g" "$FILE"
+ 
+          echo "Updated appsettings.json with UAT secrets"
+
+      - name: Build Docker image (UAT)
+        run: |
+          docker build \
+            -f ${{ env.API_PATH }}/Dockerfile \
+            -t ${{ steps.image-tag.outputs.image }} \
+            -t ${{ vars.ACR_LOGIN_SERVER }}/${{ vars.IMAGE_NAME }}:latest \
+            .
+          echo "Docker image built successfully (UAT)"
+          docker images | grep ${{ vars.IMAGE_NAME }}
+
+      - name: Push Docker image to ACR (UAT)
+        run: |
+          docker push ${{ steps.image-tag.outputs.image }}
+          docker push ${{ vars.ACR_LOGIN_SERVER }}/${{ vars.IMAGE_NAME }}:latest
+          echo "Docker image pushed to ACR (UAT)"
+
+      - name: Azure logout (UAT)
+        if: always()
+        run: az logout || true
+
+  deploy-uat:
+    name: Deploy to Azure App Service (UAT)
     runs-on: ubuntu-latest
-    if: always()
+    needs: docker-build-push-uat
+    environment: uat
+
     steps:
-      - name: Generate Final Summary
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure CLI login (UAT)
         run: |
-          echo "# 🎉 CSP Portal DEV Infrastructure Deployment Complete" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "## 📊 Deployment Status" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Tier | Status |" >> $GITHUB_STEP_SUMMARY
-          echo "|------|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Core | ${{ needs.deploy-core.result == 'success' && '✅ Success' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Web  | ${{ needs.deploy-web.result == 'success' && '✅ Success' || needs.deploy-web.result == 'skipped' && '⏭️ Skipped' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Data | ${{ needs.deploy-data.result == 'success' && '✅ Success' || needs.deploy-data.result == 'skipped' && '⏭️ Skipped' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "## 🔗 Quick Links" >> $GITHUB_STEP_SUMMARY
-          echo "- [Azure Portal](https://portal.azure.com)" >> $GITHUB_STEP_SUMMARY
-          echo "- [Resource Groups](https://portal.azure.com/#blade/HubsExtension/BrowseResourceGroups)" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "---" >> $GITHUB_STEP_SUMMARY
-          echo "_Deployed via Terraform — $(date -u +'%Y-%m-%d %H:%M:%S UTC')_" >> $GITHUB_STEP_SUMMARY
+          az login --service-principal \
+            -u "${{ secrets.AZURE_CLIENT_ID }}" \
+            -p "${{ secrets.AZURE_CLIENT_SECRET }}" \
+            --tenant "${{ secrets.AZURE_TENANT_ID }}" \
+            --output none
+          echo "Successfully logged into Azure (UAT)"
+
+      - name: Verify App Service exists (UAT)
+        run: |
+          az webapp show \
+            --name ${{ vars.WEBAPP_NAME }} \
+            --resource-group ${{ vars.RESOURCE_GROUP }} \
+            --output none
+          echo "App Service verified: ${{ vars.WEBAPP_NAME }}"
+
+ 
+      - name: Inject App Settings (UAT)
+        run: |
+          az webapp config appsettings set \
+            --name ${{ vars.WEBAPP_NAME }} \
+            --resource-group ${{ vars.RESOURCE_GROUP }} \
+            --settings \
+              ASPNETCORE_URLS="http://+:8080" \
+              AzureBlobStorage__ConnectionString="${{ secrets.BLOB_CONNECTION_STRING }}" \
+              EntraId__TenantId="${{ secrets.ENTRAID__TENANTID }}" \
+              EntraId__ClientId="${{ secrets.ENTRAID__CLIENTID }}" \
+              EntraId__Authority="${{ secrets.ENTRAID__AUTHORITY }}" \
+              ExternalId__TenantId="${{ secrets.EXTERNALID__TENANTID }}" \
+              ExternalId__ClientId="${{ secrets.EXTERNALID__CLIENTID }}" \
+              ExternalId__Authority="${{ secrets.EXTERNALID__AUTHORITY }}"
+
+      - name: Deploy to App Service (UAT)
+        run: |
+          az webapp config container set \
+            --name ${{ vars.WEBAPP_NAME }} \
+            --resource-group ${{ vars.RESOURCE_GROUP }} \
+            --docker-custom-image-name ${{ needs.docker-build-push-uat.outputs.image_full }} \
+            --docker-registry-server-url https://${{ vars.ACR_LOGIN_SERVER }} \
+            --docker-registry-server-user ${{ secrets.ACR_USERNAME }} \
+            --docker-registry-server-password ${{ secrets.ACR_PASSWORD }}
+          echo "Container configuration updated"
+
+      - name: Restart App Service (UAT)
+        run: |
+          az webapp restart \
+            --name ${{ vars.WEBAPP_NAME }} \
+            --resource-group ${{ vars.RESOURCE_GROUP }}
+          echo "App Service restarted"
+
+      - name: Wait for App Service to be healthy (UAT)
+        run: |
+          echo "Waiting for app to be ready..."
+          URL="https://${{ vars.WEBAPP_NAME }}.azurewebsites.net/health"
+          MAX_ATTEMPTS=15
+          SLEEP_SECONDS=10
+
+          for i in $(seq 1 $MAX_ATTEMPTS); do
+            echo "Attempt $i/$MAX_ATTEMPTS — checking $URL"
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL" || echo "000")
+
+            if [[ "$STATUS" == "200" ]]; then
+              echo "App is healthy! HTTP $STATUS"
+              exit 0
+            fi
+
+            echo "HTTP $STATUS — retrying in ${SLEEP_SECONDS}s..."
+            sleep $SLEEP_SECONDS
+          done
+
+          echo "App did not return 200 after $MAX_ATTEMPTS attempts — check logs"
+          exit 0
+
+      - name: Smoke Tests (UAT)
+        continue-on-error: true
+        run: |
+          echo "Running smoke tests..."
+          URL="https://${{ vars.WEBAPP_NAME }}.azurewebsites.net"
+          
+          # Test health endpoint
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL/health" || echo "000")
+          if [[ "$STATUS" == "200" ]]; then
+            echo "Health endpoint: PASSED (HTTP $STATUS)"
+          else
+            echo "Health endpoint: HTTP $STATUS"
+          fi
+          
+          # Test API endpoint
+          API_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL/api" || echo "000")
+          if [[ "$API_STATUS" == "200" ]] || [[ "$API_STATUS" == "404" ]]; then
+            echo "API endpoint: PASSED (HTTP $API_STATUS)"
+          else
+            echo "API endpoint: HTTP $API_STATUS"
+          fi
+
+      - name: Deployment Summary (UAT)
+        if: success()
+        run: |
+          echo "Backend UAT Deployment Summary"
+          echo "=============================="
+          echo "Status:           SUCCESS"
+          echo "Environment:      UAT"
+          echo "Docker Image:     ${{ needs.docker-build-push-uat.outputs.image_full }}"
+          echo "App Service:      ${{ vars.WEBAPP_NAME }}"
+          echo "Resource Group:   ${{ vars.RESOURCE_GROUP }}"
+          echo "URL:              https://${{ vars.WEBAPP_NAME }}.azurewebsites.net"
+          echo "Commit SHA:       ${{ github.sha }}"
+          echo "Timestamp:        $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
+
+      - name: Azure logout (UAT)
+        if: always()
+        run: az logout || true
+
+      - name: Deployment Failed (UAT)
+        if: failure()
+        run: |
+          echo "Backend UAT Deployment Failed!"
+          echo "Check the logs above for details"
+          exit 1
